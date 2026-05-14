@@ -101,6 +101,86 @@ class State:
     def register_fire(self, pid: int, info: dict) -> None:
         with self._fires_lock:
             self._fires[pid] = info
+        # Fixes #16/H4: persist fire to disk so server restart can reap orphans
+        self._persist_fire(pid, info)
+
+    def _persist_fire(self, pid: int, info: dict) -> None:
+        """Append a fire record to fires.jsonl for crash recovery."""
+        if self.folder is None:
+            return
+        fires_path = self.folder / ".vc_meta" / "fires.jsonl"
+        fires_path.parent.mkdir(parents=True, exist_ok=True)
+        rec = {
+            "pid": pid,
+            "asset_id": info.get("asset_id"),
+            "filename": info.get("filename"),
+            "started_at": info.get("started_at"),
+            "log_path": info.get("log_path"),
+            "payload_file": info.get("payload_file"),
+        }
+        try:
+            from jsonl_append import append_jsonl
+            append_jsonl(str(fires_path), rec)
+        except OSError:
+            pass
+
+    def _replay_fires_on_boot(self) -> None:
+        """On folder set, replay fires.jsonl to find orphaned processes.
+        Dead PIDs get their tmp payload files cleaned up and their asset
+        status transitioned if still stuck on 'firing'."""
+        if self.folder is None:
+            return
+        fires_path = self.folder / ".vc_meta" / "fires.jsonl"
+        if not fires_path.exists():
+            return
+        reaped = 0
+        surviving = []
+        try:
+            with open(fires_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    pid = rec.get("pid")
+                    if pid is None:
+                        continue
+                    # Check if process is still alive
+                    alive = False
+                    try:
+                        os.kill(pid, 0)
+                        alive = True
+                    except (OSError, ProcessLookupError):
+                        pass
+                    if alive:
+                        surviving.append(rec)
+                    else:
+                        # Dead PID: clean up tmp payload file
+                        pf = rec.get("payload_file")
+                        if pf and os.path.exists(pf):
+                            try:
+                                os.unlink(pf)
+                            except OSError:
+                                pass
+                        # Transition asset out of 'firing' if stuck
+                        asset_id = rec.get("asset_id")
+                        if asset_id is not None:
+                            _transition_fire_status(asset_id, -1)
+                        reaped += 1
+        except OSError:
+            return
+        # Rewrite fires.jsonl with only surviving entries
+        try:
+            with open(fires_path, "w", encoding="utf-8") as f:
+                for rec in surviving:
+                    f.write(json.dumps(rec) + "\n")
+        except OSError:
+            pass
+        if reaped:
+            print(f"[fire-registry] reaped {reaped} orphaned fire(s) on boot", file=sys.stderr)
 
     def list_fires(self, include_finished: bool = True, finished_limit: int = 30) -> list:
         """Return current fires. Polls each subprocess to update status. Drops
@@ -224,6 +304,8 @@ class State:
                 "asset_ids": [], "set_at": 0.0,
                 "set_by": "folder-switched", "folder": str(folder),
             }
+        # Fixes #16/H4: replay fire registry to reap orphaned PIDs from prior crash
+        self._replay_fires_on_boot()
         if run_scan:
             self.rescan()
         self.mark_changed()
@@ -463,7 +545,7 @@ def _list_assets(params: dict) -> dict:
         "recent": "a.file_modified_at DESC",
         "name": "a.filename ASC",
         "status": "a.status, a.file_modified_at DESC, a.filename",
-        "shot": "(CASE WHEN a.shot_id IS NULL OR a.shot_id = '' THEN 1 ELSE 0 END), a.shot_id, a.filename",
+        "shot": "a.shot_id IS NULL, a.shot_id = '', a.shot_id, a.filename",
     }.get(sort, "a.file_modified_at DESC")
 
     rows = conn.execute(
