@@ -730,6 +730,14 @@ def main() -> int:
              "Errors still print to stderr; final ✓/✗ summary still prints to stdout. "
              "Full transcript is always captured at ~/.cache/visual-chef/hf_logs/.",
     )
+    ap.add_argument(
+        "--log-path",
+        default=None,
+        help="Explicit per-fire log path. When omitted, falls back to the timestamped "
+             "path under ~/.cache/visual-chef/hf_logs/. The dashboard server passes this "
+             "so the fire registry can locate the log deterministically (otherwise the "
+             "server's precomputed path and the wrapper's timestamped one diverge — C1).",
+    )
     args = ap.parse_args()
 
     if args.payload_file:
@@ -747,7 +755,14 @@ def main() -> int:
     # Open a log file BEFORE run() so even early failures (validation, collision)
     # land a transcript on disk. Tee stdout + stderr into it.
     filename = payload.get("filename", "unknown")
-    log_path = hf_log_path(filename)
+    # If the dashboard server passed --log-path, honor it so the fire registry
+    # and the wrapper's log file paths stay in sync. Falls back to timestamped
+    # default for direct CLI invocations.
+    if getattr(args, "log_path", None):
+        log_path = Path(args.log_path).expanduser()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        log_path = hf_log_path(filename)
     log_fp = None
     real_stdout = sys.stdout
     real_stderr = sys.stderr

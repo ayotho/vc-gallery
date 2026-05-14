@@ -235,13 +235,24 @@ def find_orphans(gallery_folder: Path, db_path: Path) -> dict[str, list[dict[str
 # Recent event tail
 # ---------------------------------------------------------------------------
 
-TEST_EVENT_PATTERNS = ("ZZZ_TEST_", "VC_TEST_", "test.")
+TEST_FILENAME_PATTERNS = ("ZZZ_TEST_", "VC_TEST_")
+TEST_EVENT_PREFIXES = ("test.",)  # event-NAME prefix only, not filename substring
 
 
 def _is_test_event(rec: dict) -> bool:
-    """Heuristic — test events leave fingerprints in filename/asset_id/source."""
+    """Heuristic — test events leave fingerprints in filename/asset_id/source.
+
+    H2 fix: previously `"test."` was matched as a SUBSTRING of `filename`, which
+    false-positive'd on `latest.png`, `bestest.png`, `prototest.mp4` etc. Now:
+      - filename match requires the uppercased TEST_FILENAME_PATTERNS prefixes
+        (those are real test-harness fingerprints)
+      - event-NAME match requires the test prefix at the start of `rec.event`
+    """
     fn = (rec.get("filename") or "")
-    if any(p in fn for p in TEST_EVENT_PATTERNS):
+    if any(p in fn for p in TEST_FILENAME_PATTERNS):
+        return True
+    ev = (rec.get("event") or "")
+    if any(ev.startswith(p) for p in TEST_EVENT_PREFIXES):
         return True
     src = (rec.get("source") or "")
     if src in ("test", "vc_gallery_test"):

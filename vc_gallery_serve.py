@@ -656,16 +656,25 @@ def _audit(event: str, payload: dict, *, severity: str = "info", source: str = "
     audit gets `ts` (ISO), `severity`, and `source` fields — previously the
     server bypassed the obs helper and wrote bare `{event, ...payload}` rows,
     which made the JSONL log impossible to filter by severity or actor.
+
+    H1 fix: shadow the reserved keys instead of splatting raw. If a caller's
+    payload includes `source` or `severity`, the splat would have crashed with
+    `TypeError: got multiple values for argument 'source'`.
     """
     if STATE.log_path is None:
         return
+    # Drop reserved keys from payload to avoid the kwarg collision.
+    safe = {k: v for k, v in payload.items() if k not in ("source", "severity", "ts", "event")}
+    # If the caller stuffed their own severity/source into the payload, honor it.
+    eff_severity = payload.get("severity", severity)
+    eff_source = payload.get("source", source)
     try:
         obs_mod.record_event(
             STATE.log_path,
             event,
-            source=source,
-            severity=severity,
-            **payload,
+            source=eff_source,
+            severity=eff_severity,
+            **safe,
         )
     except OSError:
         pass
@@ -988,14 +997,24 @@ def _fire_draft(asset_id: int) -> dict:
     if not WRAPPER_SCRIPT.exists():
         return {"ok": False, "error": f"wrapper not found: {WRAPPER_SCRIPT}"}
 
-    # Compute the wrapper's per-fire log path so the UI can tail it later
+    # Compute the wrapper's per-fire log path so the UI can tail it later.
+    # Patch 2026-05-14 (C1 follow-up): the wrapper used to append a timestamp
+    # to the log filename, so the server's precomputed path was always wrong
+    # and the UI's `lines: []` was permanent. Wrapper now accepts --log-path;
+    # we pass a deterministic stamped path so both sides agree.
     log_dir = Path.home() / ".cache" / "visual-chef" / "hf_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{Path(row['filename']).stem}.log"
+    log_stamp = time.strftime("%Y%m%dT%H%M%S")
+    log_path = log_dir / f"{Path(row['filename']).stem}_{log_stamp}_pid{os.getpid()}.log"
 
     try:
         proc = subprocess.Popen(
-            [sys.executable, str(WRAPPER_SCRIPT), "--payload-file", tmp_path, "--quiet"],
+            [
+                sys.executable, str(WRAPPER_SCRIPT),
+                "--payload-file", tmp_path,
+                "--quiet",
+                "--log-path", str(log_path),
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
@@ -1009,21 +1028,33 @@ def _fire_draft(asset_id: int) -> dict:
     # Patch 2026-05-14: enriched with shot_id, client, project, prompt_head,
     # refs_count, and a coarse eta_s (per VC-B finding). Lets the UI show a
     # meaningful per-fire row without re-reading the temp payload file.
+    # Post-audit fix (C2/M1): estimated_cost was being read from `row` — but
+    # there is no such column on `assets`; the value lives in the parsed
+    # note_data we already have. refs_count was undercounting video drafts
+    # (only image/media/refs — wrapper accepts start_image/end_image/video/audio).
     prompt_text = (payload.get("prompt") or "")
-    refs = payload.get("image") or payload.get("media") or payload.get("refs") or []
+    ref_keys = ("image", "start_image", "end_image", "video", "audio", "media", "refs")
+    refs_total = 0
+    for k in ref_keys:
+        v = payload.get(k)
+        if isinstance(v, list):
+            refs_total += len(v)
+        elif isinstance(v, str) and v:
+            refs_total += 1
     model_id = payload.get("model") or ""
     eta_s = _coarse_eta_for_model(model_id)
     STATE.register_fire(proc.pid, {
         "asset_id": asset_id,
         "filename": row["filename"],
+        "gallery": str(STATE.folder) if STATE.folder else None,
         "model": model_id,
         "workflow": payload.get("workflow"),
         "shot_id": row["shot_id"],
         "client": row["client"],
         "project": row["project"],
         "prompt_head": prompt_text[:120],
-        "refs_count": len(refs) if isinstance(refs, list) else 0,
-        "estimated_cost": row["estimated_cost"] if "estimated_cost" in row.keys() else None,
+        "refs_count": refs_total,
+        "estimated_cost": note_data.get("estimated_cost") if isinstance(note_data, dict) else None,
         "eta_s": eta_s,
         "started_at": time.time(),
         "log_path": str(log_path),
@@ -1571,10 +1602,11 @@ class Handler(BaseHTTPRequestHandler):
         allowed_roots = []
         if STATE.folder:
             allowed_roots.append(STATE.folder.resolve())
-        for root in (
-            Path("/Users/ayo/Desktop").resolve(),
-            Path("/tmp").resolve(),
-        ):
+        # Patch 2026-05-14 (M3): dropped unconditional /tmp because any local
+        # process can drop a symlink there and exfil through /ref. /tmp is
+        # opt-in via VC_REF_ALLOW_ROOTS now. ~/Desktop kept because that's
+        # where the director keeps client working folders.
+        for root in (Path("/Users/ayo/Desktop").resolve(),):
             if root.exists():
                 allowed_roots.append(root)
         # Operator can extend via VC_REF_ALLOW_ROOTS (colon-separated absolute paths).
