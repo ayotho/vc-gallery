@@ -1,0 +1,327 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "hf_payload.schema.json",
+  "title": "Higgsfield wrapper payload",
+  "description": "Schema for input to hf_gen_with_sidecar.sh. Validates SHAPE only; runtime validator enforces path canonicalization, model recency, and Soul Character account-match.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "prompt",
+    "gallery",
+    "filename",
+    "client",
+    "project",
+    "workflow"
+  ],
+  "properties": {
+    "prompt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 50000,
+      "description": "The generation prompt verbatim"
+    },
+    "model": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$",
+      "minLength": 1,
+      "maxLength": 64,
+      "default": "nano_banana_2",
+      "description": "Higgsfield job_set_type; runtime validator checks against current `higgsfield model list --json` snapshot"
+    },
+    "aspect_ratio": {
+      "type": "string",
+      "enum": [
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4",
+        "21:9",
+        "9:21",
+        "3:2",
+        "2:3"
+      ]
+    },
+    "resolution": {
+      "type": "string",
+      "enum": [
+        "1k",
+        "2k",
+        "4k",
+        "480p",
+        "720p",
+        "1080p"
+      ],
+      "description": "Image models use 1k/2k/4k. Video models (Seedance, Kling, Veo) use 480p/720p/1080p. Platform rejects mismatches per model."
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9,
+      "default": 1
+    },
+    "duration": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60,
+      "description": "Video duration in seconds. Only meaningful for video models (Seedance, Kling, Veo). Common values: 5, 8, 10. Platform rejects unsupported values per model."
+    },
+    "mode": {
+      "type": "string",
+      "description": "Generation mode for video models (e.g. pro for higher resolution). Passed as --mode to the CLI."
+    },
+    "genre": {
+      "type": "string",
+      "enum": ["auto", "action", "horror", "comedy", "noir", "drama", "epic"],
+      "description": "Cinematic genre register for Seedance 2.0. Influences pacing, lighting, motion register. Passed as --genre to the CLI. Default 'auto'."
+    },
+    "wait_timeout_seconds": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 1800,
+      "default": 180,
+      "description": "Override wrapper default (180s for image, 600s recommended for video)"
+    },
+    "skip_sidecar": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, wrapper writes the asset directly to the gallery DB (vc_gallery) instead of emitting a legacy .md sidecar. Recommended for all new gens — the dashboard is the truth, sidecars become clutter. Existing sidecars stay readable; this only governs new ones."
+    },
+    "gallery": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Absolute path to gallery folder. Runtime validator ensures it canonicalizes under $VC_GALLERY_ROOT (no escapes via .. or symlinks)."
+    },
+    "filename": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*\\.(png|jpg|jpeg|webp|mp4|mov|webm)$",
+      "minLength": 5,
+      "maxLength": 255,
+      "description": "Basename only. Pattern rejects path separators, leading dots, control chars, NUL. Extension allowlist enforces image/video output types."
+    },
+    "client": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Lowercase slug; matches client folder name under clients/"
+    },
+    "project": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Lowercase slug; maps to `episode` in sidecar frontmatter"
+    },
+    "workflow": {
+      "type": "string",
+      "enum": [
+        "createframe",
+        "decgi",
+        "faceswap",
+        "style-transfer",
+        "multi-angle",
+        "multi-angle-retexture",
+        "retexture",
+        "character-reference",
+        "2-pass",
+        "backfill",
+        "frame-capture",
+        "unknown"
+      ],
+      "description": "Must match VALID_WORKFLOWS in write_companion_note.py. Runtime validator imports VALID_WORKFLOWS at validate-time and asserts this enum stays in sync."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "",
+        "review",
+        "accepted",
+        "approved",
+        "rejected",
+        "hero",
+        "legacy"
+      ],
+      "default": ""
+    },
+    "image": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "maxItems": 8
+        }
+      ],
+      "description": "Source image(s): a single string OR an array of strings (1-8). Each element is either a local absolute path (auto-uploaded by CLI) or a pre-uploaded media UUID. For multi-ref workflows (face-swap, identity transfer, multi-angle composition), pass an ARRAY \u2014 wrapper passes one --image flag per element to the higgsfield CLI. Runtime validator: if path, must canonicalize under client/project asset roots."
+    },
+    "start_image": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "maxItems": 8
+        }
+      ],
+      "description": "For image-to-video first frame. String OR array (rare, but allowed for multi-ref video models). Each element: local path (auto-uploaded by CLI) or pre-uploaded UUID or https URL."
+    },
+    "end_image": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "maxItems": 8
+        }
+      ],
+      "description": "For image-to-video last frame. String OR array."
+    },
+    "video": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "maxItems": 8
+        }
+      ],
+      "description": "Source video for video-to-video / lipsync / restyle workflows. String OR array (e.g. multi-clip stitch). Local path (auto-uploaded), UUID, or https URL."
+    },
+    "audio": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "maxItems": 8
+        }
+      ],
+      "description": "Source audio for lipsync / VO-driven video models. String OR array. Local path, UUID, or https URL."
+    },
+    "soul_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "Pre-trained Soul Character reference ID. Use this OR soul_name, not both."
+    },
+    "soul_name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "description": "Friendly name resolved against clients/<client>/soul_refs.yaml. Runtime validator: lookup must succeed AND stored account_id must match active workspace_id."
+    },
+    "parent": {
+      "type": "string",
+      "description": "Wikilink to parent sidecar, e.g. '[[mj_SH1430_v5_r1]]'"
+    },
+    "variant": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "pass_num": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 99,
+      "default": 1,
+      "description": "Iteration counter; same field as canonical writer's pass"
+    },
+    "shot_id": {
+      "type": "string",
+      "pattern": "^(SH\\d+[A-Za-z]{0,4}|)$",
+      "maxLength": 16,
+      "description": "Shot identifier (e.g. SH1430, SH050C, SH040ABC compound multi-panel IDs) or empty string"
+    },
+    "session": {
+      "type": "string",
+      "description": "Session UUID \u2014 wrapper auto-detects if omitted"
+    },
+    "session_date": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "description": "YYYY-MM-DD; wrapper auto-fills today if omitted"
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 1000,
+      "description": "Short why-this-exists note; survives to sidecar frontmatter"
+    },
+    "refs": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Wikilinks or URLs to reference material; appears in sidecar refs[]"
+    },
+    "extra_tags": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+      },
+      "description": "Lowercase tags appended to sidecar tags[]; model/workflow/client/project auto-added by canonical writer"
+    },
+    "force": {
+      "type": "boolean",
+      "default": false,
+      "description": "Override existing-file collision (skips O_EXCL reservation conflict)"
+    },
+    "quality": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "description": "Output quality. Supported by gpt_image_2. Defaults to high."
+    }
+  },
+  "allOf": [
+    {
+      "description": "soul_id and soul_name are mutually exclusive",
+      "not": {
+        "type": "object",
+        "required": [
+          "soul_id",
+          "soul_name"
+        ]
+      }
+    }
+  ]
+}

@@ -1138,7 +1138,7 @@ def _fire_draft(asset_id: int) -> dict:
                 "--log-path", str(log_path),
             ],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=open(str(log_path), "a"),  # Fixes #23 — capture import errors
             stdin=subprocess.DEVNULL,
             close_fds=True,
             start_new_session=True,
