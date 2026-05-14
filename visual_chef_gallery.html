@@ -1344,7 +1344,7 @@ async function fillDrawer(id) {
       ${asset.has_sidecar ? metaRow('Sidecar', asset.sidecar_path ? asset.sidecar_path.split('/').pop() : '—', true) : ''}
       ${metaRow('Path', pathFolder(asset.file_path), true)}
       ${(asset.width || asset.height || asset.size_bytes) ? metaRow('Size', `${asset.width || '?'} × ${asset.height || '?'} · ${fmtBytes(asset.size_bytes)}`, true) : ''}
-      ${asset.hf_url ? metaRow('HF link', '<a href="' + escapeHtml(asset.hf_url) + '" target="_blank" rel="noopener" class="hf-inline-link">↗ open</a>', false) : ''}
+      ${asset.hf_url ? metaRowLink('HF link', asset.hf_url, '↗ open', false) : ''}
       ${isDraft && asset.draft && asset.draft.estimated_cost ? metaRow('Estimated cost', asset.draft.estimated_cost + ' credits', true) : ''}
     </div>
 
@@ -1539,7 +1539,27 @@ async function fillDrawer(id) {
 }
 
 function metaRow(k, v, mono) {
-  return `<div class="meta-row"><span class="k">${k}</span><span class="v${mono ? ' mono' : ''}">${escapeHtml(String(v))}</span></div>`;
+  // Patch 2026-05-14 (HF-LINK bug from screenshot): escaping the value broke
+  // any caller that wanted to pass pre-built HTML (e.g. the HF-link <a> tag
+  // was rendering as raw markup text instead of a clickable link). New rule:
+  // metaRow always treats its value as TEXT and escapes it. Callers that
+  // want a link should use metaRowLink() — which validates the URL scheme.
+  return `<div class="meta-row"><span class="k">${escapeHtml(String(k))}</span><span class="v${mono ? ' mono' : ''}">${escapeHtml(String(v))}</span></div>`;
+}
+
+function metaRowLink(k, url, label, mono) {
+  // Render a meta-row whose value is a clickable link. URL scheme is validated
+  // to http/https — javascript:/data:/file: are rejected (renders as plain text
+  // so the row still shows up).
+  let safeUrl = '';
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'http:' || u.protocol === 'https:') safeUrl = url;
+  } catch {}
+  const valueHtml = safeUrl
+    ? `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer" class="hf-inline-link">${escapeHtml(label || '↗ open')}</a>`
+    : escapeHtml(url || '');
+  return `<div class="meta-row"><span class="k">${escapeHtml(String(k))}</span><span class="v${mono ? ' mono' : ''}">${valueHtml}</span></div>`;
 }
 
 function escapeHtml(s) {

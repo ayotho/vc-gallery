@@ -31,6 +31,7 @@ own locking. All writes go through the same connection.
 from __future__ import annotations
 
 import argparse
+import contextvars
 import json
 import os
 import re
@@ -39,6 +40,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -515,6 +517,25 @@ def _get_asset(asset_id: int) -> Optional[dict]:
             # Hide the raw JSON string from clients — the structured `draft` block
             # has everything, and director-facing `notes` should be empty for drafts.
             asset["notes"] = ""
+
+    # Patch 2026-05-14 (drawer screenshot bug): for non-draft assets, the
+    # `notes` column sometimes carries the wrapper's pulled_from metadata
+    # JSON ({"pulled_from": ..., "asset_uuid": ..., "shot": ..., ...}) — the
+    # HF link is already extracted into asset.hf_url, so leaking the raw JSON
+    # into the director's NOTES textarea is just noise. Detect that shape and
+    # blank the notes field so the director sees an empty editable space.
+    elif row["notes"]:
+        try:
+            note_data = json.loads(row["notes"])
+            if isinstance(note_data, dict) and (
+                "pulled_from" in note_data
+                or "asset_uuid" in note_data
+                or "is_draft" in note_data
+            ):
+                asset["notes"] = ""
+                asset["_system_notes_hidden"] = True  # client can inspect via /api/assets/<id>?show_system=1 later
+        except (json.JSONDecodeError, TypeError):
+            pass  # plain-text notes — leave as-is
 
     history = conn.execute(
         "SELECT id, from_status, to_status, note, reviewer, reviewed_at "
