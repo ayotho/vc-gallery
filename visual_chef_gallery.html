@@ -101,8 +101,9 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .brand        { grid-column: 1; min-width: 0; height: 100%; overflow: hidden; }
 .topbar-center { grid-column: 2; min-width: 0; height: 100%; overflow: hidden; flex-wrap: nowrap; }
 .topbar-right  { grid-column: 3; min-width: 0; height: 100%; overflow: hidden; flex-wrap: nowrap; }
-body.sidebar-collapsed .topbar { grid-template-columns: 0 1fr auto; }
-body.sidebar-collapsed .brand { visibility: hidden; pointer-events: none; }
+body.sidebar-collapsed .topbar { grid-template-columns: 44px 1fr auto; }
+body.sidebar-collapsed .brand .brand-mark,
+body.sidebar-collapsed .brand .brand-name { display: none; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 var(--s-lg); height: 100%; }
 .brand-mark { width: 22px; height: 22px; border-radius: 50%; background: var(--ink); position: relative; }
 .brand-mark::after { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--block-lime); }
@@ -499,8 +500,8 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 /* Tablet: auto-collapse sidebar so canvas has room when drawer is open */
 @media (max-width: 1240px) {
   body { --col-sidebar: 0px; }
-  body .brand { visibility: hidden; pointer-events: none; }
-  body .topbar { grid-template-columns: 0 1fr auto; }
+  body .brand .brand-mark, body .brand .brand-name { display: none; }
+  body .topbar { grid-template-columns: 44px 1fr auto; }
   .sidebar-show { display: inline-flex; }
   .sidebar { opacity: 0; pointer-events: none; }
 }
