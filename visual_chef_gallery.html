@@ -1344,7 +1344,6 @@ async function fillDrawer(id) {
       ${asset.has_sidecar ? metaRow('Sidecar', asset.sidecar_path ? asset.sidecar_path.split('/').pop() : '—', true) : ''}
       ${metaRow('Path', pathFolder(asset.file_path), true)}
       ${(asset.width || asset.height || asset.size_bytes) ? metaRow('Size', `${asset.width || '?'} × ${asset.height || '?'} · ${fmtBytes(asset.size_bytes)}`, true) : ''}
-      ${asset.hf_url ? metaRowLink('HF link', asset.hf_url, '↗ open', false) : ''}
       ${isDraft && asset.draft && asset.draft.estimated_cost ? metaRow('Estimated cost', asset.draft.estimated_cost + ' credits', true) : ''}
     </div>
 
