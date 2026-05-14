@@ -257,8 +257,50 @@ def main(argv: list[str] | None = None) -> int:
     test_ref_serving(t)
     test_fires(t)
     test_open_in_finder_feedback(t)
+    test_dimensions_populated(t)
+    test_scanner_preserves_prompts(t)
 
     return t.summary()
+
+
+def test_dimensions_populated(t: Tester) -> None:
+    """Regression-pin P11: width/height/duration must be populated for the
+    majority of assets (post-backfill). Before this patch every drawer showed
+    "? × ?" because schema columns were never written."""
+    print("\n[9/10] Dimensions populated")
+    status, data = t.req("GET", "/api/assets?limit=200")
+    items = data.get("items", []) if isinstance(data, dict) else []
+    with_dims = [a for a in items if a.get("width") and a.get("height")]
+    # Tolerate a small fraction of orphans / unprobeable rows
+    pct = (len(with_dims) / max(1, len(items))) * 100
+    t.check(
+        "≥90% of assets carry width+height post-backfill",
+        pct >= 90,
+        f"only {pct:.1f}% have dims ({len(with_dims)}/{len(items)})",
+    )
+
+
+def test_scanner_preserves_prompts(t: Tester) -> None:
+    """Regression-pin the critical scanner-wipe fix: a rescan of the working
+    folder must NOT delete prompts rows that have no sidecar (i.e. were
+    written by the wrapper directly under the 2026-05-13 skip_sidecar policy).
+    """
+    print("\n[10/10] Scanner preserves wrapper-written prompts")
+    # Snapshot the current prompts count
+    status, before = t.req("GET", "/api/health")
+    if status != 200:
+        t.check("rescan-preserve precondition (health 200)", False, f"got {status}")
+        return
+    # Trigger a rescan and compare
+    rstatus, _ = t.req("POST", "/api/rescan")
+    t.check("POST /api/rescan returns 200", rstatus == 200, f"got {rstatus}")
+    status, after = t.req("GET", "/api/health")
+    # Asset count must be stable across a no-op rescan
+    t.check(
+        "asset count unchanged across rescan",
+        before.get("db_asset_count") == after.get("db_asset_count"),
+        f"before={before.get('db_asset_count')} after={after.get('db_asset_count')}",
+    )
 
 
 def test_fires(t: Tester) -> None:

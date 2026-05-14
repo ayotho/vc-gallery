@@ -365,7 +365,35 @@ def _write_db_row(payload: dict, target: Path, prompt: str, refs: list[str], job
         conn.close()
         return True
     except Exception as e:  # noqa: BLE001
-        print(f"[db-write] FAIL: {e}", file=sys.stderr)
+        # Patch 2026-05-14 (Plan-agent audit adj #2): the bare except used to
+        # only print to stderr — when --quiet was set, this disappeared into
+        # the log file and the caller silently degraded. Now: structured log
+        # + traceback + emit an obs event so /api/debug/recent-events surfaces
+        # the failure too.
+        import traceback as _tb
+        tb = _tb.format_exc()
+        print(f"[db-write] FAIL: {type(e).__name__}: {e}", file=sys.stderr)
+        print(tb, file=sys.stderr)
+        try:
+            if str(_HERE) not in sys.path:
+                sys.path.insert(0, str(_HERE))
+            import vc_gallery_obs as _obs  # type: ignore
+            from vc_gallery_lib import db_path_for as _db_path_for  # type: ignore
+            gallery = payload.get("gallery")
+            if gallery:
+                log_path = Path(_db_path_for(gallery)).parent / "visual_chef.jsonl"
+                _obs.record_event(
+                    log_path, "wrapper.db_write_failed",
+                    source="wrapper", severity="error",
+                    filename=payload.get("filename"),
+                    error_class=type(e).__name__,
+                    error_message=str(e),
+                    target=str(target),
+                    workflow=payload.get("workflow"),
+                    model=payload.get("model"),
+                )
+        except Exception:  # noqa: BLE001 — best-effort log; never swallow original
+            pass
         return False
 
 
@@ -571,15 +599,39 @@ def run(payload: dict, dry_run: bool = False, gallery_root: Optional[str] = None
 
     # ─── 4. Wait + 5. Download + 6. Sidecar — per output ───
     refs = list(payload.get("refs", []))
-    # If source was a local path with basename, add basename as a ref.
-    # Handles all media fields (image, start_image, end_image, video, audio).
+    # Add basenames of every source media field as refs, deduped, preserving order.
+    # Patch 2026-05-14 (Plan-agent audit):
+    #   - Was: only added when src contained "/" — bare gallery-relative sources
+    #     like "nbp_father_yelling.png" were silently dropped from refs.
+    #   - Was: simple prepend with no dedup — same ref could appear N times if
+    #     listed in multiple media fields (image + start_image), or if already
+    #     in payload.refs.
+    # Now: take basename unconditionally for any non-URL string; insert at the
+    # front; dedupe by lowered basename keeping first occurrence.
+    media_refs: list[str] = []
     for media_key in ("image", "start_image", "end_image", "video", "audio"):
         if media_key not in payload:
             continue
         srcs = payload[media_key] if isinstance(payload[media_key], list) else [payload[media_key]]
         for src in srcs:
-            if isinstance(src, str) and "/" in src:
-                refs = [Path(src).name] + refs
+            if not isinstance(src, str) or not src:
+                continue
+            if src.startswith(("http://", "https://")):
+                # Keep URL refs as-is — useful for MJ CDN paste-ins
+                media_refs.append(src)
+            else:
+                media_refs.append(Path(src).name)
+    # Stable de-dupe: media refs first (so they appear at the front), then
+    # whatever payload.refs already carries.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for r in media_refs + refs:
+        key = r.lower() if isinstance(r, str) else str(r)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(r)
+    refs = deduped
 
     overall_exit = EXIT_OK  # first non-OK code wins
     success_lines: list[str] = []
