@@ -1813,24 +1813,21 @@ class Handler(BaseHTTPRequestHandler):
             # Fixes #17/M5: was a full table scan + Python-side filter.
             # Now queries by thumb_path directly (indexed column), falling
             # back to file_path hash only if thumb_path was never populated.
+            # Fixes #17/M5: query by indexed thumb_path column first.
+            # Fallback scans only rows with NULL thumb_path (pre-backfill).
             match = STATE.conn().execute(
                 "SELECT id, file_path FROM assets WHERE thumb_path = ?",
                 (name,),
             ).fetchone()
             if match is None:
-                # Fallback: compute hash from file_path for rows pre-backfill
                 sha = name[:-4]  # strip .jpg
-                match = STATE.conn().execute(
-                    "SELECT id, file_path FROM assets WHERE substr(hex(zeroblob(0)),1,0) || ? = ?",
-                    (name, name),
-                ).fetchone()
-                # Last resort: Python-side scan (only until all rows have thumb_path)
-                if match is None:
-                    rows = STATE.conn().execute("SELECT id, file_path FROM assets").fetchall()
-                    for r in rows:
-                        if lib.thumb_key(r["file_path"]) == sha:
-                            match = r
-                            break
+                rows = STATE.conn().execute(
+                    "SELECT id, file_path FROM assets WHERE thumb_path IS NULL"
+                ).fetchall()
+                for r in rows:
+                    if lib.thumb_key(r["file_path"]) == sha:
+                        match = r
+                        break
             if match is None:
                 self._send_error_json(404, "thumbnail not found")
                 return
