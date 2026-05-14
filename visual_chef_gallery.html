@@ -211,6 +211,26 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .card .thumb-wrap { border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--hairline); position: relative; background: var(--surface-soft); transition: border-color .12s ease; }
 .card:hover .thumb-wrap { border-color: #c8c5bd; }
 .card.selected .thumb-wrap { outline: 2px solid var(--ink); outline-offset: 2px; border-color: var(--ink); }
+/* Multi-select ring — visually distinct from drawer-open "selected" state.
+   Director can have ONE drawer-open card AND have N multi-selected cards.
+   Magenta keeps it distinguishable from black ink (drawer focus). */
+.card.multi-selected .thumb-wrap { outline: 3px solid var(--accent-magenta, #d97757); outline-offset: 2px; }
+.card.multi-selected.selected .thumb-wrap { outline: 3px solid var(--accent-magenta, #d97757); box-shadow: 0 0 0 2px var(--ink); outline-offset: 2px; }
+
+/* Multi-select bar — collapses below the canvas head when N≥1 picked.
+   Hand-off cue is in the body text so director knows /canvas works. */
+.multi-select-bar { display: flex; align-items: center; gap: 12px; padding: 8px 14px; margin: 0 0 var(--s-md); background: var(--surface-soft); border: 1px solid var(--hairline); border-radius: var(--r-md); font-size: 12.5px; color: var(--ink); }
+.multi-select-bar[hidden] { display: none; }
+.multi-select-bar .ms-ico { color: var(--accent-magenta, #d97757); font-size: 9px; }
+.multi-select-bar .ms-count { font-weight: 540; }
+.multi-select-bar .ms-hint { color: #6f6c64; flex: 1; font-size: 11.5px; }
+.multi-select-bar .ms-hint code { background: var(--canvas); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--ink); font-family: var(--mono); }
+.multi-select-bar .ms-clear { font-size: 12px; padding: 5px 12px; border-radius: var(--r-pill); background: var(--ink); color: var(--on-primary); cursor: pointer; }
+.multi-select-bar .ms-clear:hover { opacity: 0.92; }
+
+/* Asset-ID chip in drawer header — small mono pill so director can quote "#2095" in chat */
+.asset-id-chip { font-family: var(--mono); font-size: 10.5px; color: #6f6c64; background: var(--surface-soft); padding: 2px 7px; border-radius: var(--r-pill); margin-left: 8px; user-select: text; }
+@media (max-width: 700px) { .asset-id-chip { display: none; } }
 
 .thumb { position: relative; display: block; }
 .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -780,6 +800,15 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
         </div>
       </div>
 
+      <!-- Multi-select bar — visible only when 1+ assets are Cmd/Shift-selected.
+           Hand-off to Claude via `/canvas` reads /api/selection (already in sync). -->
+      <div class="multi-select-bar" id="multi-select-bar" hidden>
+        <span class="ms-ico" aria-hidden="true">●</span>
+        <span class="ms-count">0 selected</span>
+        <span class="ms-hint">Cmd-click to add · Shift-click for range · Esc to clear · Claude can <code>/canvas</code></span>
+        <button class="ms-clear" id="ms-clear">Clear</button>
+      </div>
+
       <div id="grid-root"></div>
       <div id="grid-more" class="loading-more" style="display:none">Loading more…</div>
     </main>
@@ -950,6 +979,11 @@ const state = {
   doneLoading: false,
   selectedId: null,
   selectedIndex: -1,
+  // Multi-select: Cmd/Ctrl+click toggles; Shift+click range-selects; Esc
+  // clears. Mirrored to /api/selection so peer Claude sessions can see the
+  // current pick via the /canvas skill.
+  multiSelection: new Set(),  // asset_ids
+  lastMultiAnchor: null,       // for shift-range expansion
   lastChangeAt: 0,    // server's last_change_at watermark — drives auto-refresh
 };
 
@@ -1101,7 +1135,9 @@ function renderRefinements() {
 
 function cardEl(asset, idx) {
   const a = document.createElement('article');
-  a.className = 'card' + (asset.id === state.selectedId ? ' selected' : '');
+  const isCurrent = asset.id === state.selectedId;
+  const isMulti = state.multiSelection.has(asset.id);
+  a.className = 'card' + (isCurrent ? ' selected' : '') + (isMulti ? ' multi-selected' : '');
   a.dataset.status = asset.status;
   a.dataset.id = asset.id;
   a.dataset.idx = idx;
@@ -1137,7 +1173,7 @@ function cardEl(asset, idx) {
     </div>
   `;
 
-  a.addEventListener('click', () => selectAsset(asset.id));
+  a.addEventListener('click', (e) => handleCardClick(asset.id, e));
   a.querySelectorAll('.quick button').forEach(b => {
     b.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -1206,6 +1242,82 @@ function renderCanvasHead() {
   $('#counter-total').textContent = state.totalAssets.toLocaleString();
 }
 
+// -------- Selection bridge --------------------------------------------
+// Mirrors the dashboard's current pick to the server so peer Claude
+// sessions can see what the director is looking at via /api/selection.
+// Fire-and-forget — never blocks the UI, never toasts on error.
+
+function syncSelectionToServer() {
+  // Multi-selection (>1) overrides single-select; otherwise the drawer's
+  // currently-open asset is the implicit selection of one.
+  const ids = state.multiSelection.size > 0
+    ? Array.from(state.multiSelection)
+    : (state.selectedId ? [state.selectedId] : []);
+  if (ids.length === 0) {
+    fetch('/api/selection', { method: 'DELETE' }).catch(() => {});
+    return;
+  }
+  fetch('/api/selection', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_ids: ids }),
+  }).catch(() => {});
+}
+
+function handleCardClick(id, ev) {
+  // Cmd/Ctrl+click → toggle in multi-selection
+  if (ev && (ev.metaKey || ev.ctrlKey)) {
+    if (state.multiSelection.has(id)) {
+      state.multiSelection.delete(id);
+    } else {
+      state.multiSelection.add(id);
+    }
+    state.lastMultiAnchor = id;
+    renderMultiSelectChrome();
+    // Update visual ring without re-rendering the whole grid
+    const card = document.querySelector(`.card[data-id="${id}"]`);
+    if (card) card.classList.toggle('multi-selected', state.multiSelection.has(id));
+    syncSelectionToServer();
+    return;
+  }
+  // Shift+click → range select from last anchor (visible items only)
+  if (ev && ev.shiftKey && state.lastMultiAnchor != null) {
+    const a = state.items.findIndex(x => x.id === state.lastMultiAnchor);
+    const b = state.items.findIndex(x => x.id === id);
+    if (a >= 0 && b >= 0) {
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      for (let i = lo; i <= hi; i++) state.multiSelection.add(state.items[i].id);
+      renderMultiSelectChrome();
+      $$('.card').forEach(c => c.classList.toggle('multi-selected', state.multiSelection.has(Number(c.dataset.id))));
+      syncSelectionToServer();
+      return;
+    }
+  }
+  // Plain click → open the drawer (single-select)
+  selectAsset(id);
+}
+
+function clearMultiSelection() {
+  if (state.multiSelection.size === 0) return;
+  state.multiSelection.clear();
+  state.lastMultiAnchor = null;
+  $$('.card.multi-selected').forEach(c => c.classList.remove('multi-selected'));
+  renderMultiSelectChrome();
+  syncSelectionToServer();
+}
+
+function renderMultiSelectChrome() {
+  const bar = $('#multi-select-bar');
+  const count = state.multiSelection.size;
+  if (!bar) return;
+  if (count > 0) {
+    bar.hidden = false;
+    bar.querySelector('.ms-count').textContent = `${count} selected`;
+  } else {
+    bar.hidden = true;
+  }
+}
+
 // -------- Drawer ------------------------------------------------------
 
 async function selectAsset(id) {
@@ -1214,6 +1326,8 @@ async function selectAsset(id) {
   $$('.card').forEach(c => c.classList.toggle('selected', Number(c.dataset.id) === id));
   $('#drawer').classList.remove('hidden');
   document.body.classList.remove('drawer-hidden');
+  // Mirror to server (only if multi-select isn't active — multi takes priority)
+  if (state.multiSelection.size === 0) syncSelectionToServer();
   await fillDrawer(id);
 }
 
@@ -1222,6 +1336,9 @@ function closeDrawer() {
   document.body.classList.add('drawer-hidden');
   state.selectedId = null;
   $$('.card').forEach(c => c.classList.remove('selected'));
+  // If no multi-selection is active, clearing the drawer also clears server-side.
+  // Multi-select takes priority — leave it alone.
+  if (state.multiSelection.size === 0) syncSelectionToServer();
 }
 
 async function fillDrawer(id) {
@@ -1270,9 +1387,10 @@ async function fillDrawer(id) {
     sidecarBtnHdr.disabled = !asset.has_sidecar;
     sidecarBtnHdr.title = asset.has_sidecar ? 'Open sidecar' : 'No sidecar — use Copy Path below';
   }
-  $('#drawer-pos').textContent = state.selectedIndex >= 0
+  $('#drawer-pos').innerHTML = (state.selectedIndex >= 0
     ? `${state.selectedIndex + 1} / ${state.total}`
-    : `— / ${state.total}`;
+    : `— / ${state.total}`)
+    + ` <span class="asset-id-chip" title="Asset ID — quote in chat as &quot;#${asset.id}&quot;">#${asset.id}</span>`;
 
   // Drawer body
   const status = STATUSES.find(s => s.key === asset.status) || STATUSES[0];
@@ -1960,7 +2078,11 @@ function bindKeyboard() {
       $('#search').focus();
       return;
     }
-    if (e.key === 'Escape' && state.selectedId) { closeDrawer(); return; }
+    // Esc: clear multi-selection first (if active), else close the drawer.
+    if (e.key === 'Escape') {
+      if (state.multiSelection.size > 0) { clearMultiSelection(); return; }
+      if (state.selectedId) { closeDrawer(); return; }
+    }
     if (inField) return;
     // Spacebar: toggle play/pause on the drawer video (QoL for video review)
     if (e.key === ' ' && state.selectedId) {
@@ -2367,6 +2489,9 @@ function navigateLightbox(delta) {
   bindKeyboard();
   bindScroll();
   bindFires();
+  // Multi-select bar's clear button
+  const msClear = $('#ms-clear');
+  if (msClear) msClear.addEventListener('click', clearMultiSelection);
   await refresh();
 
   // Live auto-refresh: chain polls via setTimeout so a slow poll can't stack
