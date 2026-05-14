@@ -254,6 +254,11 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .badge[data-status="alternate"] .dot { background: #4f4778; }
 .badge[data-status="legacy"]    { background: var(--surface-soft); color: #6f6c64; }
 .badge[data-status="legacy"]    .dot { background: #8a877f; }
+.badge[data-status="firing"]    { background: #e67e22; color: #fff; }
+.badge[data-status="firing"]    .dot { background: #fff; }
+/* Fixes #21 — at S density (4+ cols), shrink badge to dot-only */
+body.density-s .badge { padding: 5px; gap: 0; font-size: 0; }
+body.density-s .badge .dot { width: 8px; height: 8px; }
 
 .video-mark { position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; border-radius: var(--r-full); background: rgba(255,255,255,0.92); backdrop-filter: blur(4px); display: inline-flex; align-items: center; justify-content: center; color: var(--ink); }
 .duration { position: absolute; bottom: 10px; right: 10px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.3px; background: rgba(255,255,255,0.92); color: var(--ink); padding: 3px 8px; border-radius: var(--r-pill); }
@@ -1986,6 +1991,7 @@ function bindTopbar() {
     $$('#density-seg button').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
     document.documentElement.style.setProperty('--grid-cols', b.dataset.d);
+    document.body.classList.toggle('density-s', b.dataset.d >= 4);
     savePref(PREF_KEYS.density, b.dataset.d);
   });
 }
@@ -2476,6 +2482,7 @@ function navigateLightbox(delta) {
   if (loadPref(PREF_KEYS.sidebar, '0') === '1') document.body.classList.add('sidebar-collapsed');
   const savedDensity = loadPref(PREF_KEYS.density, '3');
   document.documentElement.style.setProperty('--grid-cols', savedDensity);
+  document.body.classList.toggle('density-s', savedDensity >= 4);
   $$('#density-seg button').forEach(b => b.classList.toggle('active', b.dataset.d === savedDensity));
 
   try {
