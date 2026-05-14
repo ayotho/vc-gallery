@@ -502,13 +502,13 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 /* ─────────────────────────────────────────────
    Responsive — collapse sidebar, overlay drawer, adaptive top bar
    ───────────────────────────────────────────── */
-/* Tablet: auto-collapse sidebar so canvas has room when drawer is open */
+/* Tablet: auto-collapse sidebar — but hamburger still toggles it.
+   Fixes #22 — sidebar was force-hidden by media query, hamburger had no effect. */
 @media (max-width: 1240px) {
-  body { --col-sidebar: 0px; }
-  body .brand .brand-mark, body .brand .brand-name { display: none; }
-  body .topbar { grid-template-columns: 44px 1fr auto; }
-  .sidebar-show { display: inline-flex; }
-  .sidebar { opacity: 0; pointer-events: none; }
+  body:not(.sidebar-force-open) { --col-sidebar: 0px; }
+  body:not(.sidebar-force-open) .brand .brand-mark, body:not(.sidebar-force-open) .brand .brand-name { display: none; }
+  body:not(.sidebar-force-open) .topbar { grid-template-columns: 44px 1fr auto; }
+  body:not(.sidebar-force-open) .sidebar { opacity: 0; pointer-events: none; }
 }
 
 /* Phone-ish: drawer slides over the canvas instead of stealing a column */
@@ -1977,8 +1977,12 @@ function bindTopbar() {
   }));
 
   // Sidebar collapse toggle (left button in brand + floating handle)
+  // Fixes #22 — on narrow viewports the media query force-hides sidebar;
+  // hamburger now toggles `sidebar-force-open` to override the media query.
   const setSidebar = (collapsed) => {
     document.body.classList.toggle('sidebar-collapsed', collapsed);
+    // On narrow viewports, also toggle the force-open override
+    document.body.classList.toggle('sidebar-force-open', !collapsed);
     savePref(PREF_KEYS.sidebar, collapsed ? '1' : '0');
   };
   $('#btn-sidebar-toggle').addEventListener('click', () => setSidebar(!document.body.classList.contains('sidebar-collapsed')));
