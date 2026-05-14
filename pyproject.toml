@@ -1,0 +1,35 @@
+[project]
+name = "vc-canvas"
+version = "0.2.0"
+description = "Visual Chef Gallery — local review dashboard for AI-generated media"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Ayo Thomas" }]
+dependencies = [
+    "pyyaml>=6.0",
+    # Standard library covers everything else (no Flask — BaseHTTPRequestHandler).
+    # Optional runtime deps:
+    #   ffmpeg / ffprobe must be on PATH for thumbnail extraction
+    #   higgsfield CLI for hf_gen_with_sidecar.py
+]
+
+[project.scripts]
+vc-canvas = "vc_gallery_serve:main"
+
+[tool.setuptools]
+py-modules = [
+    "vc_gallery_serve",
+    "vc_gallery_lib",
+    "vc_gallery_scan",
+    "vc_gallery_obs",
+    "vc_gallery_cleanup",
+    "vc_gallery_init",
+    "vc_gallery_thumb",
+    "vc_gallery_test",
+    "vc_gallery_backfill_hf_links",
+    "hf_gen_with_sidecar",
+    "jsonl_append",
+    "write_media_sidecar",
+    "write_companion_note",
+]
