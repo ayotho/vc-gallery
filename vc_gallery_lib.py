@@ -109,9 +109,9 @@ MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
 
 VALID_STATUSES = {
     "review", "accepted", "hero", "revise", "rejected", "alternate", "legacy",
-    # `draft` lifecycle = staged-but-unfired. Transitions to `review` once the
-    # wrapper completes and the new media file lands on disk. See vc_gallery_serve._fire_draft.
-    "draft",
+    # draft lifecycle: draft → firing → review (success) or rejected (failure).
+    # Fixes #18 — previously jumped straight to 'review' before wrapper exited.
+    "draft", "firing",
 }
 
 # Aliases the canonical sidecar writer (write_companion_note.py) emits or

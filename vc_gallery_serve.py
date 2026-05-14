@@ -116,6 +116,8 @@ class State:
                     if rc is not None:
                         info["exit_code"] = rc
                         info["finished_at"] = info.get("finished_at") or now
+                        # Fixes #18: transition firing → review/rejected based on exit code
+                        _transition_fire_status(info.get("asset_id"), rc)
                 # Build a safe dict (drop the proc handle)
                 row = {k: v for k, v in info.items() if k != "proc"}
                 row["pid"] = pid
@@ -1048,6 +1050,31 @@ def _delete_draft(asset_id: int) -> dict:
     return {"ok": True}
 
 
+def _transition_fire_status(asset_id: int | None, exit_code: int) -> None:
+    """Transition a firing draft based on wrapper exit code.
+    Fixes #18 — only called when proc.poll() returns a result."""
+    if asset_id is None:
+        return
+    try:
+        conn = STATE.conn()
+        row = conn.execute("SELECT status FROM assets WHERE id = ?", (asset_id,)).fetchone()
+        if row is None or row["status"] != "firing":
+            return
+        new_status = "review" if exit_code == 0 else "rejected"
+        conn.execute(
+            "UPDATE assets SET status = ?, last_updated_at = strftime('%s','now') WHERE id = ?",
+            (new_status, asset_id),
+        )
+        _audit("fire.completed", {
+            "asset_id": asset_id,
+            "exit_code": exit_code,
+            "new_status": new_status,
+        })
+        STATE.mark_changed()
+    except Exception as e:
+        print(f"[fire-transition] failed for asset {asset_id}: {e}", file=sys.stderr)
+
+
 def _fire_draft(asset_id: int) -> dict:
     """Spawn the wrapper for a staged draft.
 
@@ -1166,9 +1193,11 @@ def _fire_draft(asset_id: int) -> dict:
         "shot_id": row["shot_id"],
     }, source="api")
 
-    # Transition draft → review so the UI tab counts shift
+    # Transition draft → firing (stays here until wrapper exits).
+    # Fixes #18 — previously flipped to 'review' immediately, which meant
+    # failed fires left orphan 'review' rows with no media on disk.
     conn.execute(
-        "UPDATE assets SET status = 'review', last_updated_at = strftime('%s','now') WHERE id = ?",
+        "UPDATE assets SET status = 'firing', last_updated_at = strftime('%s','now') WHERE id = ?",
         (asset_id,),
     )
     conn.commit()

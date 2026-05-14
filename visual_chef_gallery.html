@@ -945,6 +945,7 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 
 const STATUSES = [
   { key: 'draft',     label: 'Drafts',    swatch: 'var(--block-pink)' },
+  { key: 'firing',    label: 'Firing',    swatch: '#e67e22' },
   { key: 'review',    label: 'Review',    swatch: '#8a877f' },
   { key: 'accepted',  label: 'Accepted',  swatch: 'var(--block-mint)' },
   { key: 'hero',      label: 'Hero',      swatch: 'var(--block-lime)', dark: true },
@@ -1379,9 +1380,9 @@ async function fillDrawer(id) {
   const finderBtnHdr = $('#drawer-open-finder');
   const sidecarBtnHdr = $('#drawer-sidecar');
   if (finderBtnHdr) {
-    const isDraftAsset = asset.status === 'draft';
-    finderBtnHdr.disabled = isDraftAsset;
-    finderBtnHdr.title = isDraftAsset ? 'Drafts have no file yet — fire to create one' : 'Open in Finder';
+    const isDraftOrFiring = asset.status === 'draft' || asset.status === 'firing';
+    finderBtnHdr.disabled = isDraftOrFiring;
+    finderBtnHdr.title = isDraftOrFiring ? 'No file yet — waiting for wrapper' : 'Open in Finder';
   }
   if (sidecarBtnHdr) {
     sidecarBtnHdr.disabled = !asset.has_sidecar;
@@ -1406,7 +1407,7 @@ async function fillDrawer(id) {
   ].filter(Boolean).join(' · ');
 
   const body = $('#drawer-body');
-  const isDraft = asset.status === 'draft';
+  const isDraft = asset.status === 'draft' || asset.status === 'firing';
   // Build ref blocks once — used by both draft view and normal view
   const refsHtml = (() => {
     // Prefer refs_resolved (full URLs + thumbnails); fall back to raw strings
