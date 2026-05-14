@@ -38,6 +38,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 import vc_gallery_lib as lib  # noqa: E402
+import vc_gallery_obs as obs_mod  # noqa: E402
 from jsonl_append import append_jsonl  # noqa: E402
 
 
@@ -409,16 +410,13 @@ def _reconcile_renames(conn, source: Path, log_target: Path) -> int:
             (str(new_path.resolve()), missing["id"]),
         )
         renames += 1
-        try:
-            append_jsonl(str(log_target), {
-                "event": "scan.rename_reconciled",
-                "asset_id": missing["id"],
-                "filename": missing["filename"],
-                "old_file_path": missing["file_path"],
-                "new_file_path": str(new_path.resolve()),
-            })
-        except OSError:
-            pass
+        obs_mod.record_event(
+            log_target, "scan.rename_reconciled", source="scan",
+            asset_id=missing["id"],
+            filename=missing["filename"],
+            old_file_path=missing["file_path"],
+            new_file_path=str(new_path.resolve()),
+        )
     return renames
 
 
@@ -478,17 +476,13 @@ def scan(
             if action != "unchanged":
                 if not quiet:
                     print(f"{action:>9}  {row['filename']}")
-                try:
-                    append_jsonl(str(log_target), {
-                        "event": f"scan.{action}",
-                        "asset_id": asset_id,
-                        "file_path": row["file_path"],
-                        "status": row["status"],
-                        "source_type": row["source_type"],
-                    })
-                except OSError:
-                    # log failure is non-fatal — DB write already happened
-                    pass
+                obs_mod.record_event(
+                    log_target, f"scan.{action}", source="scan",
+                    asset_id=asset_id,
+                    file_path=row["file_path"],
+                    status=row["status"],
+                    source_type=row["source_type"],
+                )
 
         conn.execute("COMMIT")
     except Exception:

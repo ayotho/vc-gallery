@@ -206,6 +206,7 @@ CREATE INDEX IF NOT EXISTS idx_assets_scene   ON assets(scene);
 CREATE INDEX IF NOT EXISTS idx_assets_source  ON assets(source_type);
 CREATE INDEX IF NOT EXISTS idx_assets_model   ON assets(model);
 CREATE INDEX IF NOT EXISTS idx_assets_filename ON assets(filename);
+CREATE INDEX IF NOT EXISTS idx_assets_thumb   ON assets(thumb_path);
 CREATE INDEX IF NOT EXISTS idx_reviews_asset  ON reviews(asset_id, reviewed_at DESC);
 """
 

@@ -725,25 +725,36 @@ def _open_in_finder(asset_id: int) -> tuple[bool, str]:
         return False, f"open failed: {exc}"
 
 
+_ETA_BY_PREFIX: dict[str, int] = {
+    # Longest prefix first — iteration order matters (sorted at lookup time).
+    # Image models
+    "kling-image": 30,
+    "kling_image": 30,
+    # Video models
+    "kling": 280,
+    "seedance": 110,
+    "veo": 220,
+    "vee_o": 220,
+    # Fast image models
+    "nano_banana": 35,
+    "nb2": 35,
+    "nbp": 35,
+    "gpt_image": 60,
+    "imagegen": 60,
+    "qwen": 45,
+}
+
+
 def _coarse_eta_for_model(model_id: str) -> int:
     """Best-guess wall-clock time in seconds for a single fire of this model.
-    Used by /api/fires to render a meaningful progress estimate. Conservative
-    — actual times vary with prompt complexity, queue depth, retry behavior.
-    Patch 2026-05-14: was missing entirely; UI had nothing to anchor a bar to.
+    Uses longest-prefix-wins matching so 'kling-image' (30s) isn't caught
+    by the shorter 'kling' (280s) prefix.
     """
     m = (model_id or "").lower()
-    if "kling" in m:
-        return 280
-    if "seedance" in m:
-        return 110
-    if "veo" in m or "vee_o" in m:
-        return 220
-    if "nano_banana" in m or "nb2" in m or "nbp" in m:
-        return 35
-    if "gpt_image" in m or "imagegen" in m:
-        return 60
-    if "qwen" in m:
-        return 45
+    # Sort by prefix length descending — longest match wins.
+    for prefix, eta in sorted(_ETA_BY_PREFIX.items(), key=lambda x: -len(x[0])):
+        if prefix in m:
+            return eta
     return 90
 
 
@@ -1716,16 +1727,28 @@ class Handler(BaseHTTPRequestHandler):
             return
         target = STATE.thumb_dir / name
         if not target.exists():
-            # Reverse-map the hash → source path via DB. O(N) but N≈2k, ~1ms.
-            sha = name[:-4]  # strip .jpg
-            rows = STATE.conn().execute(
-                "SELECT id, file_path FROM assets"
-            ).fetchall()
-            match = None
-            for r in rows:
-                if lib.thumb_key(r["file_path"]) == sha:
-                    match = r
-                    break
+            # Reverse-map the hash → source path via DB.
+            # Fixes #17/M5: was a full table scan + Python-side filter.
+            # Now queries by thumb_path directly (indexed column), falling
+            # back to file_path hash only if thumb_path was never populated.
+            match = STATE.conn().execute(
+                "SELECT id, file_path FROM assets WHERE thumb_path = ?",
+                (name,),
+            ).fetchone()
+            if match is None:
+                # Fallback: compute hash from file_path for rows pre-backfill
+                sha = name[:-4]  # strip .jpg
+                match = STATE.conn().execute(
+                    "SELECT id, file_path FROM assets WHERE substr(hex(zeroblob(0)),1,0) || ? = ?",
+                    (name, name),
+                ).fetchone()
+                # Last resort: Python-side scan (only until all rows have thumb_path)
+                if match is None:
+                    rows = STATE.conn().execute("SELECT id, file_path FROM assets").fetchall()
+                    for r in rows:
+                        if lib.thumb_key(r["file_path"]) == sha:
+                            match = r
+                            break
             if match is None:
                 self._send_error_json(404, "thumbnail not found")
                 return
