@@ -42,6 +42,9 @@ from jsonl_append import append_jsonl  # noqa: E402
 
 
 # Columns we upsert into the assets table (excluding id/timestamps).
+# Patch 2026-05-14: added width, height, duration_sec — schema had them since
+# day one but nothing wrote them, so every drawer showed "? × ?". Probed via
+# ffprobe inside _row_for. Backfilled for existing rows via vc_gallery_backfill_media_probe.py.
 ASSET_COLUMNS = [
     "file_path", "filename", "media_type",
     "size_bytes", "file_modified_at",
@@ -49,7 +52,63 @@ ASSET_COLUMNS = [
     "status", "shot_id", "scene", "model", "workflow",
     "pass_num", "variant", "client", "project",
     "parent_filename", "session", "session_date", "score",
+    "width", "height", "duration_sec",
 ]
+
+
+def probe_media_dimensions(media_path) -> dict:
+    """Run ffprobe and return {width, height, duration_sec}.
+
+    All three default to None on probe failure. ffprobe handles PNG/JPG/WebP
+    /GIF as single-frame streams, so the same code path covers images + video.
+
+    Patch 2026-05-14: addresses the "SIZE ? × ?" complaint. Cheap (<200ms per
+    file on local SSD), so we do it at scan time. Aborts after 5s wall-clock
+    to keep a single bad file from stalling a 2k-file rescan.
+    """
+    import subprocess as _subprocess
+    import json as _json
+    out = {"width": None, "height": None, "duration_sec": None}
+    p = Path(media_path)
+    # Skip 0-byte files and partial-download .tmp.* fragments — same skip
+    # the rest of the scanner uses.
+    try:
+        st = p.stat()
+        if st.st_size == 0 or ".tmp." in p.name:
+            return out
+    except OSError:
+        return out
+    try:
+        res = _subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height,duration:format=duration",
+                "-of", "json",
+                str(p),
+            ],
+            capture_output=True, text=True, timeout=5,
+        )
+        if res.returncode != 0:
+            return out
+        data = _json.loads(res.stdout)
+        stream = (data.get("streams") or [{}])[0]
+        out["width"] = int(stream["width"]) if stream.get("width") else None
+        out["height"] = int(stream["height"]) if stream.get("height") else None
+        # Try stream duration first (works for video); fall back to format duration
+        dur = stream.get("duration")
+        if not dur:
+            dur = (data.get("format") or {}).get("duration")
+        if dur:
+            try:
+                d = float(dur)
+                out["duration_sec"] = d if d > 0 else None
+            except (TypeError, ValueError):
+                pass
+    except (_subprocess.TimeoutExpired, _subprocess.SubprocessError, _json.JSONDecodeError, FileNotFoundError):
+        # ffprobe missing on this machine — log once at first miss elsewhere
+        return out
+    return out
 
 
 def _iter_media_files(source: Path, recurse: bool):
@@ -74,6 +133,12 @@ def _iter_media_files(source: Path, recurse: bool):
         # Skip wrapper's `.tmp` download files (real content lands on rename)
         if p.name.endswith(".tmp") or ".tmp." in p.name:
             continue
+        # Skip vc-pipeline conform intermediates — Premiere/Topaz writes them
+        # then deletes after consume; if the scanner picks them up we get
+        # zombie DB rows pointing at vanished files. Plan-agent audit
+        # 2026-05-14 found 12+ such zombies in EP8.
+        if p.name.startswith("temp_conform_"):
+            continue
         yield p
 
 
@@ -96,6 +161,10 @@ def _row_for(media: Path, sidecar: Path | None) -> tuple[dict, dict | None]:
         except OSError:
             sidecar_data = {}
 
+    # Width/height/duration are probed LAZILY in _upsert_asset, not here —
+    # otherwise every startup re-ffprobes 2000+ files even when nothing
+    # changed (~80s of wasted CPU per server restart). _upsert_asset has the
+    # existing-row context to decide if probing is necessary.
     row = {
         "file_path": str(media.resolve()),
         "filename": media.name,
@@ -118,6 +187,10 @@ def _row_for(media: Path, sidecar: Path | None) -> tuple[dict, dict | None]:
         "session": sidecar_data.get("session") or None,
         "session_date": sidecar_data.get("session_date") or None,
         "score": sidecar_data.get("score"),
+        # Placeholders — filled in by _upsert_asset only when needed
+        "width": None,
+        "height": None,
+        "duration_sec": None,
     }
 
     prompt_row = None
@@ -133,11 +206,16 @@ def _row_for(media: Path, sidecar: Path | None) -> tuple[dict, dict | None]:
 
 
 def _existing_fingerprint(conn, file_path: str) -> tuple | None:
-    """Return (id, size_bytes, file_modified_at, source_type, model) for a
-    known asset, else None. Source/model returned so a re-scan doesn't
-    downgrade a `generated` row that the wrapper wrote directly to DB."""
+    """Return (id, size_bytes, file_modified_at, source_type, model, width, height, duration_sec)
+    for a known asset, else None. Width/height/duration returned so that
+    _upsert_asset can decide whether to skip the expensive ffprobe call —
+    if the file is unchanged AND we already have its dimensions, we don't
+    probe again. Source/model returned so a re-scan doesn't downgrade a
+    `generated` row that the wrapper wrote directly to DB.
+    """
     cur = conn.execute(
-        "SELECT id, size_bytes, file_modified_at, source_type, model FROM assets WHERE file_path = ?",
+        "SELECT id, size_bytes, file_modified_at, source_type, model, "
+        "width, height, duration_sec FROM assets WHERE file_path = ?",
         (file_path,),
     )
     r = cur.fetchone()
@@ -145,9 +223,23 @@ def _existing_fingerprint(conn, file_path: str) -> tuple | None:
 
 
 def _upsert_asset(conn, row: dict) -> tuple[int, str]:
-    """Insert or update an asset. Returns (asset_id, 'added' | 'updated' | 'unchanged')."""
+    """Insert or update an asset. Returns (asset_id, 'added' | 'updated' | 'unchanged').
+
+    Probes width/height/duration via ffprobe ONLY when:
+      - the file is new (no existing row), OR
+      - the file changed (size/mtime differ from DB), OR
+      - the existing row has NULL dimensions (legacy / backfill miss)
+
+    For the steady state — server restart on an already-scanned gallery —
+    we skip the probe entirely. Startup time drops from ~80s to <1s.
+    """
     existing = _existing_fingerprint(conn, row["file_path"])
     if existing is None:
+        # New file → probe dimensions before insert.
+        dims = probe_media_dimensions(row["file_path"])
+        row["width"] = dims["width"]
+        row["height"] = dims["height"]
+        row["duration_sec"] = dims["duration_sec"]
         cols = ", ".join(ASSET_COLUMNS)
         placeholders = ", ".join("?" for _ in ASSET_COLUMNS)
         values = [row[c] for c in ASSET_COLUMNS]
@@ -159,7 +251,8 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
         _upsert_job(conn, asset_id, row)
         return asset_id, "added"
 
-    asset_id, old_size, old_mtime, old_source_type, old_model = existing
+    (asset_id, old_size, old_mtime, old_source_type, old_model,
+     old_w, old_h, old_dur) = existing
 
     # Don't let a sidecar-driven re-scan downgrade a `generated` row the
     # wrapper wrote directly. If the existing row already has rich metadata
@@ -167,10 +260,27 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
     if old_source_type == "generated" and old_model and row["source_type"] != "generated":
         row["source_type"] = "generated"
 
-    if old_size == row["size_bytes"] and abs((old_mtime or 0) - row["file_modified_at"]) < 1.0:
-        # File unchanged, but still refresh the jobs link in case sidecar gained URL
+    unchanged = (old_size == row["size_bytes"]
+                 and abs((old_mtime or 0) - row["file_modified_at"]) < 1.0)
+
+    # Preserve existing dimensions on unchanged files. Probe lazily if NULL.
+    if unchanged:
+        if old_w is None or old_h is None:
+            # Backfill miss — probe once and patch in place.
+            dims = probe_media_dimensions(row["file_path"])
+            if dims["width"] is not None or dims["height"] is not None:
+                conn.execute(
+                    "UPDATE assets SET width = ?, height = ?, duration_sec = COALESCE(?, duration_sec) WHERE id = ?",
+                    (dims["width"], dims["height"], dims["duration_sec"], asset_id),
+                )
         _upsert_job(conn, asset_id, row)
         return asset_id, "unchanged"
+
+    # File changed → probe + full update.
+    dims = probe_media_dimensions(row["file_path"])
+    row["width"] = dims["width"]
+    row["height"] = dims["height"]
+    row["duration_sec"] = dims["duration_sec"]
 
     set_clause = ", ".join(f"{c} = ?" for c in ASSET_COLUMNS)
     values = [row[c] for c in ASSET_COLUMNS] + [asset_id]
@@ -199,9 +309,32 @@ def _upsert_job(conn, asset_id: int, row: dict) -> None:
     )
 
 
-def _upsert_prompt(conn, asset_id: int, prompt_row: dict | None) -> None:
+def _upsert_prompt(conn, asset_id: int, prompt_row: dict | None, has_sidecar: bool = False) -> None:
+    """Insert/update or DELETE the prompts row for one asset.
+
+    CRITICAL PATCH 2026-05-14 — was the cause of every wrapper-fired asset
+    showing empty References + empty Prompt:
+
+    Previously, this function DELETE'd from `prompts` whenever `prompt_row is
+    None`. The scanner builds `prompt_row` from a `.md` sidecar; if the file
+    has no sidecar, `prompt_row` is None — but the wrapper writes prompts
+    directly via `upsert_asset_direct` (under the 2026-05-13 skip_sidecar=True
+    policy). So every rescan blew away the wrapper-written prompts + refs.
+
+    Worse, this happened even on `unchanged` actions — just running `scan`
+    on a quiet directory was destructive.
+
+    Fix: only DELETE when a sidecar EXISTED and is now the source of truth
+    (i.e. director removed the .md and we should mirror that). Otherwise, if
+    there's no sidecar prompt data to write, leave any wrapper-written row
+    alone. This unblocks bugs from issue #19 (refs missing) without forcing
+    a backfill — going forward, prompts simply stop being wiped.
+    """
     if prompt_row is None:
-        conn.execute("DELETE FROM prompts WHERE asset_id = ?", (asset_id,))
+        if has_sidecar:
+            # Sidecar exists but carries no prompt/refs → mirror by clearing.
+            conn.execute("DELETE FROM prompts WHERE asset_id = ?", (asset_id,))
+        # No sidecar → leave wrapper-written prompts untouched.
         return
     conn.execute(
         """INSERT INTO prompts (asset_id, prompt_text, refs_json)
@@ -336,7 +469,10 @@ def scan(
                 continue
 
             asset_id, action = _upsert_asset(conn, row)
-            _upsert_prompt(conn, asset_id, prompt_row)
+            # has_sidecar flag controls whether _upsert_prompt is allowed to
+            # DELETE existing prompts when prompt_row is None. Wrapper-written
+            # prompts MUST survive scans of files that have no sidecar.
+            _upsert_prompt(conn, asset_id, prompt_row, has_sidecar=bool(row.get("has_sidecar")))
             counts[action] += 1
 
             if action != "unchanged":
