@@ -87,6 +87,16 @@ class State:
         # checks proc.poll() against each entry to decide running/completed/failed.
         self._fires: dict = {}  # pid → {asset_id, filename, started_at, log_path, payload_file, proc, finished_at?, exit_code?}
         self._fires_lock = threading.Lock()
+        # Selection slot — what the director is looking at right now. Read by
+        # peer Claude sessions via GET /api/selection to skip path-copying.
+        # Multi-select first-class: list shape from day one.
+        self._selection: dict = {
+            "asset_ids": [],
+            "set_at": 0.0,
+            "set_by": "director",
+            "folder": None,  # invalidate on folder switch
+        }
+        self._selection_lock = threading.Lock()
 
     def register_fire(self, pid: int, info: dict) -> None:
         with self._fires_lock:
@@ -132,6 +142,62 @@ class State:
             raise RuntimeError("no working folder set")
         return self._conn
 
+    # ---- Selection slot (multi-select) -------------------------------
+    # Ephemeral pointer to which assets the director is looking at right
+    # now. Read by peer Claude sessions via GET /api/selection. Lost on
+    # server restart (intentional — selection is transient).
+
+    def set_selection(self, asset_ids, source: str = "director") -> dict:
+        """Replace the selection slot. Caps at 50 IDs to keep payloads sane."""
+        # Defensive int-coerce + dedupe preserving order + cap
+        cleaned: list = []
+        seen: set = set()
+        for raw in (asset_ids or []):
+            try:
+                a = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if a in seen:
+                continue
+            seen.add(a)
+            cleaned.append(a)
+            if len(cleaned) >= 50:
+                break
+        with self._selection_lock:
+            self._selection = {
+                "asset_ids": cleaned,
+                "set_at": time.time(),
+                "set_by": source,
+                "folder": str(self.folder) if self.folder else None,
+            }
+            return dict(self._selection)
+
+    def get_selection(self) -> dict:
+        """Return the current selection, invalidating if folder changed."""
+        with self._selection_lock:
+            sel = dict(self._selection)
+        # Cross-folder asset IDs are meaningless. Reset (lazily) on mismatch.
+        if sel.get("folder") and sel["folder"] != (str(self.folder) if self.folder else None):
+            with self._selection_lock:
+                self._selection = {
+                    "asset_ids": [],
+                    "set_at": 0.0,
+                    "set_by": "auto-cleared",
+                    "folder": str(self.folder) if self.folder else None,
+                }
+                return dict(self._selection)
+        return sel
+
+    def clear_selection(self) -> dict:
+        with self._selection_lock:
+            self._selection = {
+                "asset_ids": [],
+                "set_at": time.time(),
+                "set_by": "cleared",
+                "folder": str(self.folder) if self.folder else None,
+            }
+            return dict(self._selection)
+
     def set_folder(self, folder: Path, *, run_scan: bool = True) -> dict:
         folder = folder.expanduser().resolve()
         if not folder.exists() or not folder.is_dir():
@@ -148,6 +214,14 @@ class State:
             self._conn = lib.connect(self.db_path)
             self._known_files = set()  # reset so watcher reinitializes for new folder
             lib.remember_folder(folder)
+        # Selection slot belongs to a specific folder — wipe on swap.
+        # Done outside the main _lock to avoid lock-order issues (selection
+        # uses its own lock).
+        with self._selection_lock:
+            self._selection = {
+                "asset_ids": [], "set_at": 0.0,
+                "set_by": "folder-switched", "folder": str(folder),
+            }
         if run_scan:
             self.rescan()
         self.mark_changed()
@@ -1355,6 +1429,27 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/folder":
             self._send_json(200, STATE.folder_info())
             return
+        if path == "/api/selection":
+            # Read-side of the selection bridge. Returns full asset detail
+            # for every ID currently selected. Dropped IDs (asset deleted
+            # since selection) are silently filtered — `count` reflects the
+            # survivors. Empty selection returns 200 with count: 0, never 404.
+            sel = STATE.get_selection()
+            assets = []
+            if STATE.folder is not None:
+                for aid in sel.get("asset_ids", []):
+                    detail = _get_asset(aid)
+                    if detail is not None:
+                        assets.append(detail)
+            self._send_json(200, {
+                "folder": sel.get("folder"),
+                "set_at": sel.get("set_at"),
+                "set_by": sel.get("set_by"),
+                "count": len(assets),
+                "asset_ids": [a["id"] for a in assets],
+                "assets": assets,
+            })
+            return
         if path == "/api/facets":
             if STATE.folder is None:
                 self._send_error_json(409, "no working folder set")
@@ -1414,6 +1509,29 @@ class Handler(BaseHTTPRequestHandler):
                 return
             _audit("folder.switched", {"to": info["current"]})
             self._send_json(200, info)
+            return
+
+        if path == "/api/selection":
+            if STATE.folder is None:
+                self._send_error_json(409, "no working folder set")
+                return
+            payload = self._read_json_body()
+            ids = payload.get("asset_ids")
+            if ids is None:
+                # Single-ID convenience: accept {"asset_id": N}
+                single = payload.get("asset_id")
+                ids = [single] if single is not None else []
+            if not isinstance(ids, list):
+                self._send_error_json(400, "asset_ids must be a list")
+                return
+            source = payload.get("source") or "director"
+            sel = STATE.set_selection(ids, source=source)
+            self._send_json(200, {
+                "ok": True,
+                "asset_ids": sel["asset_ids"],
+                "count": len(sel["asset_ids"]),
+                "set_by": sel["set_by"],
+            })
             return
 
         if path == "/api/rescan":
@@ -1505,6 +1623,10 @@ class Handler(BaseHTTPRequestHandler):
             result = _delete_draft(int(m.group(1)))
             status = 200 if result.get("ok") else 400
             self._send_json(status, result)
+            return
+        if path == "/api/selection":
+            sel = STATE.clear_selection()
+            self._send_json(200, {"ok": True, "count": 0, "set_by": sel["set_by"]})
             return
         self._send_error_json(404, f"no route: {path}")
 
