@@ -235,11 +235,34 @@ def find_orphans(gallery_folder: Path, db_path: Path) -> dict[str, list[dict[str
 # Recent event tail
 # ---------------------------------------------------------------------------
 
-def tail_events(log_path: Path | str, n: int = 50, event_filter: str | None = None) -> list[dict[str, Any]]:
+TEST_EVENT_PATTERNS = ("ZZZ_TEST_", "VC_TEST_", "test.")
+
+
+def _is_test_event(rec: dict) -> bool:
+    """Heuristic — test events leave fingerprints in filename/asset_id/source."""
+    fn = (rec.get("filename") or "")
+    if any(p in fn for p in TEST_EVENT_PATTERNS):
+        return True
+    src = (rec.get("source") or "")
+    if src in ("test", "vc_gallery_test"):
+        return True
+    return False
+
+
+def tail_events(
+    log_path: Path | str,
+    n: int = 50,
+    event_filter: str | None = None,
+    *,
+    include_test: bool = False,
+    severity: str | None = None,
+) -> list[dict[str, Any]]:
     """Return the last n events from the JSONL log, newest first.
 
-    Loads the whole file (acceptable for the per-gallery event log which stays
-    in the low MB range). For larger files, switch to a reverse seek.
+    Patch 2026-05-14:
+      - skips obvious test-harness events by default (`ZZZ_TEST_`, `VC_TEST_`,
+        `test.` prefixes, or `source=test`). Pass `include_test=True` to see them.
+      - new `severity` arg filters by severity level (info|warn|error).
     """
     log_path = Path(log_path)
     if not log_path.exists():
@@ -256,6 +279,10 @@ def tail_events(log_path: Path | str, n: int = 50, event_filter: str | None = No
                 except json.JSONDecodeError:
                     continue
                 if event_filter and event_filter not in (rec.get("event") or ""):
+                    continue
+                if severity and (rec.get("severity") or "info") != severity:
+                    continue
+                if not include_test and _is_test_event(rec):
                     continue
                 out.append(rec)
     except OSError as e:

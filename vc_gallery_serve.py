@@ -258,9 +258,13 @@ WATCHER = FolderWatcher(STATE)
 # Query helpers
 # ---------------------------------------------------------------------------
 
+# Patch 2026-05-14: added `parent_filename` (IC-C: silently ignored before),
+# `pass_num` (variant pass tracking), and `aspect_ratio` so filters cover
+# every column the dashboard exposes in the sidebar.
 VALID_FILTERS = {
     "status", "source_type", "model", "workflow", "shot_id", "scene",
     "media_type", "client", "project", "has_sidecar",
+    "parent_filename", "pass_num", "aspect_ratio",
 }
 
 
@@ -371,11 +375,17 @@ def _list_assets(params: dict) -> dict:
     total = conn.execute(f"SELECT count(*) {base_sql}", values).fetchone()[0]
 
     sort = (params.get("sort") or ["recent"])[0]
+    # Patch 2026-05-14:
+    #   - sort=shot puts NULL/empty shot_ids LAST, not interleaved with the
+    #     valid ones (was: alphabetical fallback meant raw_manual drops with
+    #     null shot_id polluted the top — VC-C found 269/269 videos this way).
+    #   - sort=status tiebreaks by recent so within a status block the newest
+    #     surfaces first (VC-C: was just alphabetical).
     order = {
         "recent": "a.file_modified_at DESC",
         "name": "a.filename ASC",
-        "status": "a.status, a.filename",
-        "shot": "a.shot_id, a.filename",
+        "status": "a.status, a.file_modified_at DESC, a.filename",
+        "shot": "(CASE WHEN a.shot_id IS NULL OR a.shot_id = '' THEN 1 ELSE 0 END), a.shot_id, a.filename",
     }.get(sort, "a.file_modified_at DESC")
 
     rows = conn.execute(
@@ -388,16 +398,29 @@ def _list_assets(params: dict) -> dict:
 
 
 def _facet_counts() -> dict:
-    """Return counts by status / source_type / media_type for filter chips."""
+    """Return counts by status / source_type / media_type for filter chips.
+    Patch 2026-05-14: added `scene` and `shot_id` facets so the sidebar can
+    offer per-scene/per-shot filtering (VC-C: video reviewers can't group by
+    scene without this). `shot_id` cap at 200 distinct values to keep response
+    small on big galleries.
+    """
     conn = STATE.conn()
     out: dict[str, dict[str, int]] = {}
-    for col in ("status", "source_type", "media_type", "model", "workflow"):
+    for col in ("status", "source_type", "media_type", "model", "workflow", "scene"):
         out[col] = {
             r[col]: r["c"]
             for r in conn.execute(
-                f"SELECT {col}, count(*) c FROM assets WHERE {col} IS NOT NULL GROUP BY {col} ORDER BY c DESC"
+                f"SELECT {col}, count(*) c FROM assets WHERE {col} IS NOT NULL AND {col} != '' GROUP BY {col} ORDER BY c DESC"
             )
         }
+    # shot_id can have many distinct values — cap for UI sanity
+    out["shot_id"] = {
+        r["shot_id"]: r["c"]
+        for r in conn.execute(
+            "SELECT shot_id, count(*) c FROM assets WHERE shot_id IS NOT NULL AND shot_id != '' "
+            "GROUP BY shot_id ORDER BY c DESC LIMIT 200"
+        )
+    }
     return out
 
 
@@ -467,6 +490,10 @@ def _get_asset(asset_id: int) -> Optional[dict]:
 
     # Draft-specific payload data — sourced from notes JSON. Drafts use status='draft'
     # and store the full wrapper payload + refs in notes so the UI can preview before fire.
+    # Patch 2026-05-14 (IC-A): the raw `notes` JSON string is no longer leaked
+    # alongside the parsed `draft` block — the structured `draft.payload` is the
+    # truth, the JSON string was redundant + ugly (unicode-escaped). The asset.notes
+    # field is for director-typed comments, not draft state.
     if asset["status"] == "draft":
         try:
             note_data = json.loads(row["notes"]) if row["notes"] else {}
@@ -485,6 +512,9 @@ def _get_asset(asset_id: int) -> Optional[dict]:
                 _resolve_ref_to_url(r, STATE.folder)
                 for r in (note_data.get("image_refs") or [])
             ]
+            # Hide the raw JSON string from clients — the structured `draft` block
+            # has everything, and director-facing `notes` should be empty for drafts.
+            asset["notes"] = ""
 
     history = conn.execute(
         "SELECT id, from_status, to_status, note, reviewer, reviewed_at "
@@ -598,11 +628,45 @@ def _open_in_finder(asset_id: int) -> tuple[bool, str]:
         return False, f"open failed: {exc}"
 
 
-def _audit(event: str, payload: dict) -> None:
+def _coarse_eta_for_model(model_id: str) -> int:
+    """Best-guess wall-clock time in seconds for a single fire of this model.
+    Used by /api/fires to render a meaningful progress estimate. Conservative
+    — actual times vary with prompt complexity, queue depth, retry behavior.
+    Patch 2026-05-14: was missing entirely; UI had nothing to anchor a bar to.
+    """
+    m = (model_id or "").lower()
+    if "kling" in m:
+        return 280
+    if "seedance" in m:
+        return 110
+    if "veo" in m or "vee_o" in m:
+        return 220
+    if "nano_banana" in m or "nb2" in m or "nbp" in m:
+        return 35
+    if "gpt_image" in m or "imagegen" in m:
+        return 60
+    if "qwen" in m:
+        return 45
+    return 90
+
+
+def _audit(event: str, payload: dict, *, severity: str = "info", source: str = "api") -> None:
+    """Server-side event recorder.
+    Patch 2026-05-14: now routes through obs_mod.record_event so every server
+    audit gets `ts` (ISO), `severity`, and `source` fields — previously the
+    server bypassed the obs helper and wrote bare `{event, ...payload}` rows,
+    which made the JSONL log impossible to filter by severity or actor.
+    """
     if STATE.log_path is None:
         return
     try:
-        append_jsonl(str(STATE.log_path), {"event": event, **payload})
+        obs_mod.record_event(
+            STATE.log_path,
+            event,
+            source=source,
+            severity=severity,
+            **payload,
+        )
     except OSError:
         pass
 
@@ -942,11 +1006,25 @@ def _fire_draft(asset_id: int) -> dict:
         return {"ok": False, "error": f"failed to spawn wrapper: {e}"}
 
     # Register the live fire so /api/fires can report it in real time
+    # Patch 2026-05-14: enriched with shot_id, client, project, prompt_head,
+    # refs_count, and a coarse eta_s (per VC-B finding). Lets the UI show a
+    # meaningful per-fire row without re-reading the temp payload file.
+    prompt_text = (payload.get("prompt") or "")
+    refs = payload.get("image") or payload.get("media") or payload.get("refs") or []
+    model_id = payload.get("model") or ""
+    eta_s = _coarse_eta_for_model(model_id)
     STATE.register_fire(proc.pid, {
         "asset_id": asset_id,
         "filename": row["filename"],
-        "model": payload.get("model"),
+        "model": model_id,
         "workflow": payload.get("workflow"),
+        "shot_id": row["shot_id"],
+        "client": row["client"],
+        "project": row["project"],
+        "prompt_head": prompt_text[:120],
+        "refs_count": len(refs) if isinstance(refs, list) else 0,
+        "estimated_cost": row["estimated_cost"] if "estimated_cost" in row.keys() else None,
+        "eta_s": eta_s,
         "started_at": time.time(),
         "log_path": str(log_path),
         "payload_file": tmp_path,
@@ -958,7 +1036,9 @@ def _fire_draft(asset_id: int) -> dict:
         "filename": row["filename"],
         "pid": proc.pid,
         "payload_file": tmp_path,
-    })
+        "model": model_id,
+        "shot_id": row["shot_id"],
+    }, source="api")
 
     # Transition draft → review so the UI tab counts shift
     conn.execute(
@@ -1116,7 +1196,12 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 n = 50
             filt = (params.get("filter") or [None])[0]
-            self._send_json(200, obs_mod.tail_events(STATE.log_path, n=n, event_filter=filt))
+            severity = (params.get("severity") or [None])[0]
+            include_test = (params.get("include_test", ["0"])[0] not in ("0", "false", ""))
+            self._send_json(200, obs_mod.tail_events(
+                STATE.log_path, n=n, event_filter=filt,
+                include_test=include_test, severity=severity,
+            ))
             return
         if path == "/api/fires":
             include_finished = (params.get("include_finished", ["1"])[0] != "0")
@@ -1131,15 +1216,51 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_error_json(404, "fire not found")
                 return
             log_path = Path(entry["log_path"])
+            # Patch 2026-05-14: response now carries started_at_iso, log_size,
+            # has_failure_audit, failure_class, exit_code so the UI can render
+            # a proper progress + error card without extra round-trips. VC-B.
+            started_at = entry.get("started_at") or 0
+            from datetime import datetime, timezone as _tz
+            started_iso = (
+                datetime.fromtimestamp(started_at, tz=_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if started_at else None
+            )
+            # Failure audit sidecar lives next to the would-be output file (if any).
+            failure_audit = None
+            failure_class = None
+            try:
+                gallery_folder = STATE.folder
+                if gallery_folder and entry.get("filename"):
+                    fa_path = gallery_folder / f"{entry['filename']}.failed.json"
+                    if fa_path.exists():
+                        failure_audit = str(fa_path)
+                        try:
+                            with open(fa_path, "r", encoding="utf-8") as fp:
+                                fa_data = json.load(fp)
+                            failure_class = fa_data.get("error_class")
+                        except (OSError, json.JSONDecodeError):
+                            pass
+            except Exception:  # noqa: BLE001 — best-effort
+                pass
             if not log_path.exists():
-                self._send_json(200, {"pid": pid, "state": entry["state"], "lines": [], "note": "log not created yet"})
+                self._send_json(200, {
+                    "pid": pid,
+                    "state": entry["state"],
+                    "started_at_iso": started_iso,
+                    "has_failure_audit": failure_audit is not None,
+                    "failure_audit_path": failure_audit,
+                    "failure_class": failure_class,
+                    "exit_code": entry.get("exit_code"),
+                    "lines": [],
+                    "note": "log not created yet",
+                })
                 return
             try:
-                # Tail last N lines
                 tail_n = int((params.get("n") or ["80"])[0])
             except ValueError:
                 tail_n = 80
             try:
+                log_size = log_path.stat().st_size
                 with open(log_path, "r", encoding="utf-8", errors="replace") as fp:
                     lines = fp.readlines()
                 tail = lines[-tail_n:]
@@ -1151,8 +1272,17 @@ class Handler(BaseHTTPRequestHandler):
                 "state": entry["state"],
                 "asset_id": entry.get("asset_id"),
                 "filename": entry.get("filename"),
+                "shot_id": entry.get("shot_id"),
+                "model": entry.get("model"),
+                "workflow": entry.get("workflow"),
+                "started_at_iso": started_iso,
                 "duration_s": entry.get("duration_s"),
+                "exit_code": entry.get("exit_code"),
                 "log_path": str(log_path),
+                "log_size_bytes": log_size,
+                "has_failure_audit": failure_audit is not None,
+                "failure_audit_path": failure_audit,
+                "failure_class": failure_class,
                 "lines": [ln.rstrip("\n") for ln in tail],
             })
             return
@@ -1326,6 +1456,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send_error_json(404, f"no route: {path}")
 
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        """CORS preflight + capability discovery.
+        Patch 2026-05-14: prior server returned 501 'Unsupported method' on
+        any OPTIONS request, which broke browser-side tools and any client
+        doing a preflight before POST/PUT/DELETE on /api/draft etc.
+        """
+        self.send_response(204)
+        self.send_header("Allow", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Requested-With")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def do_PATCH(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
@@ -1414,6 +1559,15 @@ class Handler(BaseHTTPRequestHandler):
         p = Path(raw_path).expanduser().resolve()
         # Allowlist roots — localhost dashboard, but still don't let it read
         # outside expected territories.
+        #
+        # SECURITY PATCH 2026-05-14: previously `_HERE.parent.parent.resolve()`
+        # was added as a project-root allow. When the repo lived at
+        # `<...>/arsenal/00-utilities/`, parent.parent resolved to the AI
+        # visual chef project root — fine. After the 2026-05-14 move to
+        # `/Users/ayo/Coding projects/vc-canvas/`, parent.parent resolved to
+        # `/Users/ayo/` itself — which would let /ref read `~/Documents`,
+        # `~/Downloads`, etc. Dropped entirely; only the gallery folder,
+        # `~/Desktop`, `/tmp`, and an explicit env-var allowlist are valid.
         allowed_roots = []
         if STATE.folder:
             allowed_roots.append(STATE.folder.resolve())
@@ -1423,10 +1577,12 @@ class Handler(BaseHTTPRequestHandler):
         ):
             if root.exists():
                 allowed_roots.append(root)
-        # Also allow anything inside the AI visual chef project
-        project_root = _HERE.parent.parent.resolve()  # arsenal/00-utilities/ → project root
-        if project_root.exists():
-            allowed_roots.append(project_root)
+        # Operator can extend via VC_REF_ALLOW_ROOTS (colon-separated absolute paths).
+        extra = os.environ.get("VC_REF_ALLOW_ROOTS", "")
+        for extra_root in [e.strip() for e in extra.split(":") if e.strip()]:
+            er = Path(extra_root).expanduser().resolve()
+            if er.exists():
+                allowed_roots.append(er)
 
         # Use proper path-boundary check, NOT str.startswith — otherwise
         # /Users/ayo/Desktop-secrets/foo would pass when root is /Users/ayo/Desktop.
