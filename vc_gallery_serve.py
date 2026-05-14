@@ -1774,13 +1774,17 @@ class Handler(BaseHTTPRequestHandler):
         allowed_roots = []
         if STATE.folder:
             allowed_roots.append(STATE.folder.resolve())
-        # Patch 2026-05-14 (M3): dropped unconditional /tmp because any local
-        # process can drop a symlink there and exfil through /ref. /tmp is
-        # opt-in via VC_REF_ALLOW_ROOTS now. ~/Desktop kept because that's
-        # where the director keeps client working folders.
-        for root in (Path("/Users/ayo/Desktop").resolve(),):
-            if root.exists():
-                allowed_roots.append(root)
+            # Fixes #20: ref images live in sibling directories of the gallery
+            # folder (e.g. clients/, characters/).  Allow the project root
+            # (one level up from the gallery folder) so all project refs resolve.
+            proj_root = STATE.folder.resolve().parent
+            if proj_root != STATE.folder.resolve():
+                allowed_roots.append(proj_root)
+        # ~/Desktop kept because that's where the director keeps client
+        # working folders.  Cross-platform (was hardcoded to /Users/ayo/).
+        desktop = Path.home() / "Desktop"
+        if desktop.exists():
+            allowed_roots.append(desktop.resolve())
         # Operator can extend via VC_REF_ALLOW_ROOTS (colon-separated absolute paths).
         extra = os.environ.get("VC_REF_ALLOW_ROOTS", "")
         for extra_root in [e.strip() for e in extra.split(":") if e.strip()]:
