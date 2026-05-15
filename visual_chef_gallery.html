@@ -334,6 +334,16 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .meta-row .k { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.6px; color: #8a877f; font-weight: 500; padding-top: 3px; }
 .meta-row .v.mono { font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.2px; word-break: break-all; }
 .meta-row .v .dim { color: #8a877f; }
+.meta-edit-input { background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 2px 6px; margin: -2px -6px; font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.2px; color: var(--ink); width: 100%; box-sizing: border-box; transition: border-color .12s; }
+.meta-edit-input:hover { border-color: var(--hairline); }
+.meta-edit-input:focus { border-color: var(--ink); outline: none; background: var(--surface-soft); }
+.meta-edit-input::placeholder { color: #8a877f; }
+.shot-browser { max-height: 200px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 0; }
+.shot-chip { font-family: var(--mono); font-size: 11px; letter-spacing: 0.3px; padding: 3px 8px; border-radius: var(--r-pill); background: var(--surface-soft); color: #4a4842; cursor: pointer; white-space: nowrap; border: 1px solid transparent; transition: all .12s; }
+.shot-chip:hover { border-color: var(--hairline); color: var(--ink); }
+.shot-chip.active { background: var(--ink); color: var(--on-primary); border-color: var(--ink); }
+.shot-chip .chip-count { font-size: 10px; color: #8a877f; margin-left: 2px; }
+.shot-chip.active .chip-count { color: rgba(255,255,255,0.6); }
 
 .section-head { display: flex; align-items: center; justify-content: space-between; font-family: var(--mono); font-size: 11px; letter-spacing: 0.6px; text-transform: uppercase; font-weight: 500; color: var(--ink); margin: var(--s-xl) 0 var(--s-sm); }
 .section-head .dim { color: #8a877f; font-weight: 400; }
@@ -761,6 +771,11 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
         <div class="select"><span id="refine-scene-label" class="ph">scene · any</span><span class="chev">▾</span><select id="refine-scene"><option value="">any</option></select></div>
       </div>
 
+      <div class="side-group" id="shot-browser-group">
+        <div class="side-label">Shot IDs <span class="clear" data-clear="shot_id">clear</span> <span class="dim" id="shot-count"></span></div>
+        <div id="shot-browser" class="shot-browser"></div>
+      </div>
+
       <div class="side-group">
         <div class="side-label">Media</div>
         <div class="seg" id="filter-media">
@@ -981,7 +996,7 @@ const state = {
   folder: null,
   facets: {},
   totalAssets: 0,
-  filters: { status: '', source_type: '', model: '', workflow: '', scene: '', media_type: '', has_prompt: false, has_sidecar: false, q: '' },
+  filters: { status: '', source_type: '', model: '', workflow: '', scene: '', shot_id: '', media_type: '', has_prompt: false, has_sidecar: false, q: '' },
   sort: loadPref('vc.gallery.sort', 'recent'),
   items: [],
   total: 0,
@@ -1143,6 +1158,21 @@ function renderRefinements() {
   fill('#refine-workflow', '#refine-workflow-label', state.facets.workflow, state.filters.workflow, 'workflow · any');
   // scene facet not in /api/facets; derive a fallback set if absent
   fill('#refine-scene',    '#refine-scene-label',    state.facets.scene || {}, state.filters.scene, 'scene · any');
+  renderShotBrowser();
+}
+
+function renderShotBrowser() {
+  const el = $('#shot-browser');
+  const countEl = $('#shot-count');
+  if (!el) return;
+  const shots = state.facets.shot_id || {};
+  const keys = Object.keys(shots).sort();
+  countEl.textContent = keys.length ? `(${keys.length})` : '';
+  if (!keys.length) { el.innerHTML = '<span class="dim" style="font-size:12px;padding:4px">No shot IDs tagged yet</span>'; return; }
+  el.innerHTML = keys.map(k => {
+    const active = state.filters.shot_id === k ? ' active' : '';
+    return `<span class="shot-chip${active}" data-shot="${escapeHtml(k)}">${escapeHtml(k)}<span class="chip-count">${shots[k]}</span></span>`;
+  }).join('');
 }
 
 function cardEl(asset, idx) {
@@ -1465,8 +1495,8 @@ async function fillDrawer(id) {
 
     <div class="section-head">Metadata</div>
     <div class="meta-table">
-      ${metaRow('Shot', asset.shot_id || '—', true)}
-      ${metaRow('Scene', asset.scene || '—', false)}
+      ${metaRowEditable('Shot', asset.shot_id || '', 'shot_id')}
+      ${metaRowEditable('Scene', asset.scene || '', 'scene')}
       ${metaRow('Model', asset.model || '—', true)}
       ${metaRow('Workflow', asset.workflow || '—', true)}
       ${metaRow('Pass', asset.pass_num ? `v${asset.pass_num}${asset.variant ? ' · ' + asset.variant : ''}` : '—', true)}
@@ -1574,6 +1604,29 @@ async function fillDrawer(id) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); notesEl.blur(); }
   });
 
+  // Inline-editable metadata fields (shot_id, scene)
+  $$('.meta-edit-input').forEach(input => {
+    const field = input.dataset.field;
+    let saved = input.value;
+    const save = async () => {
+      const v = input.value.trim();
+      if (v === saved) return;
+      try {
+        await patchAsset(asset.id, { [field]: v });
+        saved = v;
+        flashToast(`${field.replace('_', ' ')} updated`, 'ok');
+      } catch (e) {
+        flashToast('Save failed: ' + e.message, 'error');
+        input.value = saved;
+      }
+    };
+    input.addEventListener('blur', save);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { input.value = saved; input.blur(); }
+    });
+  });
+
   // Secondary buttons
   const finderBtn = $('#btn-open-finder');
   if (finderBtn) finderBtn.addEventListener('click', () => openInFinder(asset.id));
@@ -1676,6 +1729,13 @@ function metaRow(k, v, mono) {
   return `<div class="meta-row"><span class="k">${escapeHtml(String(k))}</span><span class="v${mono ? ' mono' : ''}">${escapeHtml(String(v))}</span></div>`;
 }
 
+function metaRowEditable(k, value, field) {
+  // Inline-editable meta row. Click the value to edit; blur or Enter saves via PATCH.
+  const safeVal = escapeHtml(String(value || ''));
+  const placeholder = value ? '' : '—';
+  return `<div class="meta-row meta-row-editable" data-field="${escapeHtml(field)}"><span class="k">${escapeHtml(String(k))}</span><input class="v mono meta-edit-input" value="${safeVal}" placeholder="${placeholder}" data-field="${escapeHtml(field)}" /></div>`;
+}
+
 function metaRowLink(k, url, label, mono) {
   // Render a meta-row whose value is a clickable link. URL scheme is validated
   // to http/https — javascript:/data:/file: are rejected (renders as plain text
@@ -1749,6 +1809,7 @@ function buildQuery() {
   if (f.model) params.set('model', f.model);
   if (f.workflow) params.set('workflow', f.workflow);
   if (f.scene) params.set('scene', f.scene);
+  if (f.shot_id) params.set('shot_id', f.shot_id);
   if (f.media_type) params.set('media_type', f.media_type);
   if (f.has_prompt) params.set('has_prompt', '1');
   if (f.has_sidecar) params.set('has_sidecar', '1');
@@ -1892,6 +1953,15 @@ function bindFilters() {
   $('#refine-workflow').addEventListener('change', (e) => { state.filters.workflow = e.target.value; refresh(); });
   $('#refine-scene').addEventListener('change', (e) => { state.filters.scene = e.target.value; refresh(); });
   $('#sort').addEventListener('change', (e) => { state.sort = e.target.value; $('#sort-label').textContent = e.target.selectedOptions[0].textContent; savePref(PREF_KEYS.sort, state.sort); refresh(); });
+
+  // Shot ID browser: click to filter, click again to deselect
+  $('#shot-browser').addEventListener('click', (e) => {
+    const chip = e.target.closest('.shot-chip');
+    if (!chip) return;
+    const shot = chip.dataset.shot;
+    state.filters.shot_id = (state.filters.shot_id === shot) ? '' : shot;
+    refresh();
+  });
 
   $$('.clear').forEach(c => c.addEventListener('click', (e) => {
     e.stopPropagation();
