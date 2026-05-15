@@ -42,8 +42,14 @@
   --col-drawer:  468px;
   --topbar-h:    64px;
 
-  /* density (card column count) */
-  --grid-cols: 3;
+  /* Density — controls minimum card width, NOT fixed column count.
+     The grid uses repeat(auto-fit, minmax(--card-min, 1fr)) so cards
+     COMPRESS the way the director expects: as the drawer expands and
+     the canvas narrows, columns drop AND remaining cards grow to fill
+     the space (instead of staying small in too many columns).
+     Density buttons map: S=240px, M=320px, L=460px — bigger mins than
+     v1 so column transitions are more dramatic when resizing. */
+  --card-min: 320px;
 }
 
 /* Collapsible state — toggled by classes on <body>. CSS vars cascade to
@@ -198,8 +204,29 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .scene-sub { color: #6f6c64; font-size: 15px; font-weight: 330; letter-spacing: -0.14px; }
 .scene-count { margin-left: auto; font-family: var(--mono); font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase; color: #6f6c64; }
 
-.grid { column-gap: 18px; column-count: var(--grid-cols); margin-bottom: var(--s-md); }
-@media (min-width: 1700px) { .grid { column-count: calc(var(--grid-cols) + 1); } }
+/* Cards flow LEFT-TO-RIGHT then wrap to the next row (normal gallery reading
+   order). CSS multi-column was the prior implementation — it flowed
+   top-to-bottom-then-right (newspaper style), which made "Newest first"
+   sort look broken in Large density (2 cols): the 2nd newest landed
+   directly BELOW the newest instead of to its right.
+
+   auto-fill + minmax means columns auto-adapt to available width:
+   - Drawer expands → fewer columns fit → cards compensate
+   - Drawer collapses → more columns fit → cards spread out
+   - Card stays >= --card-min so it never goes unreadably narrow
+   No need for a wide-screen media query — auto-fill scales naturally. */
+.grid {
+  display: grid;
+  /* auto-fit (not auto-fill) — collapses empty column slots so the
+     remaining cards grow to fill the available canvas width.
+     Combined with the bigger --card-min values per density, this makes
+     compression dramatic: as drawer widens, cards drop one column at a
+     time and the survivors get bigger, exactly matching the
+     "long row of bigger cards" behaviour the director described. */
+  grid-template-columns: repeat(auto-fit, minmax(var(--card-min), 1fr));
+  gap: 18px;
+  margin-bottom: var(--s-md);
+}
 
 /* Density seg control in the canvas tools row */
 .density-seg { display: inline-flex; background: var(--surface-soft); padding: 3px; border-radius: var(--r-pill); gap: 2px; }
@@ -208,7 +235,9 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .density-seg button.active { background: var(--canvas); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
 .density-label { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.5px; text-transform: uppercase; color: #6f6c64; margin-right: 4px; }
 
-.card { break-inside: avoid; margin: 0 0 18px; background: var(--canvas); cursor: pointer; border-radius: var(--r-md); display: block; position: relative; }
+/* break-inside + margin-bottom were artifacts of the prior multi-column
+   layout. With CSS Grid + gap, the row gap is owned by the parent .grid. */
+.card { background: var(--canvas); cursor: pointer; border-radius: var(--r-md); display: block; position: relative; min-width: 0; }
 .card .thumb-wrap { border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--hairline); position: relative; background: var(--surface-soft); transition: border-color .12s ease; }
 .card:hover .thumb-wrap { border-color: #c8c5bd; }
 .card.selected .thumb-wrap { outline: 2px solid var(--ink); outline-offset: 2px; border-color: var(--ink); }
@@ -291,7 +320,10 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .duration { position: absolute; bottom: 10px; right: 10px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.3px; background: rgba(255,255,255,0.92); color: var(--ink); padding: 3px 8px; border-radius: var(--r-pill); }
 
 .card-foot { display: flex; align-items: center; justify-content: space-between; padding: 10px 4px 0; font-size: 13px; font-weight: 480; letter-spacing: -0.14px; gap: 8px; }
-.shot-id { font-family: var(--mono); letter-spacing: 0.2px; font-size: 12.5px; white-space: nowrap; }
+/* shot-id can be long (e.g. SH700_dave_extended_v3) — ellipsis when card
+   narrows. Combined with min-width:0 on the flex parent, the label
+   shrinks gracefully instead of overflowing the card frame. */
+.shot-id { font-family: var(--mono); letter-spacing: 0.2px; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .card-meta { font-family: var(--mono); font-size: 11px; color: #6f6c64; letter-spacing: 0.3px; text-transform: uppercase; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-meta .raw { color: #b07f3e; }
 
@@ -461,11 +493,7 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .history b { font-weight: 540; }
 .history .when { font-family: var(--mono); font-size: 11px; letter-spacing: 0.4px; color: #8a877f; text-transform: uppercase; }
 
-.actions { position: sticky; bottom: 0; margin: var(--s-xl) calc(var(--s-md) * -1) calc(var(--s-section) * -1); padding: var(--s-md); background: linear-gradient(180deg, rgba(255,255,255,0) 0%, var(--canvas) 30%); border-top: 1px solid var(--hairline-soft); }
-/* Issue #32 — was: rigid 4-col grid (`repeat(4, 1fr)`). When the drawer was
-   narrow (drag-resized or on a small viewport) the pills clipped off-screen.
-   Now: flex-wrap so pills drop to a second row when there isn't horizontal
-   room for all four. min-width on the buttons keeps the labels readable. */
+.actions { position: sticky; bottom: 0; margin: var(--s-xl) calc(var(--s-md) * -1) calc(var(--s-section) * -1); padding: var(--s-md) var(--s-md) var(--s-lg); background: linear-gradient(180deg, rgba(255,255,255,0) 0%, var(--canvas) 30%); border-top: 1px solid var(--hairline-soft); }
 .actions .primary { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .actions .primary .act-btn { flex: 1 1 auto; min-width: 96px; padding: 0 10px; }
 .act-btn { height: 40px; background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--r-pill); font-size: 13px; font-weight: 480; letter-spacing: -0.1px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
@@ -617,8 +645,9 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
   .view-toggle button { height: 28px; padding: 0 10px; font-size: 12px; }
   .canvas { padding: var(--s-md); }
   .canvas-title { font-size: 28px; }
-  /* Tighter masonry on phones — single column reads better than crammed three */
-  .grid { column-count: 1 !important; }
+  /* Phones: single column. With auto-fill + minmax we just bump the
+     min-width above the viewport width to force one card per row. */
+  .grid { grid-template-columns: 1fr !important; }
   /* Drawer goes full-width on phones */
   .drawer { width: 100vw !important; }
 }
@@ -2130,13 +2159,20 @@ function bindTopbar() {
   $('#btn-sidebar-toggle').addEventListener('click', () => setSidebar(!document.body.classList.contains('sidebar-collapsed')));
   $('#btn-sidebar-show').addEventListener('click', () => setSidebar(false));
 
-  // Density seg control — picks column count for the masonry
+  // Density seg control — sets card minimum width. Grid uses auto-fill so
+  // the actual column count comes out of (available width ÷ card-min),
+  // which means cards auto-compensate when the drawer expands or the
+  // viewport narrows. Button data-d values stay 2/3/4 for backward compat
+  // with stored prefs; they map to: 4=small (180px), 3=medium (260px),
+  // 2=large (380px).
+  const DENSITY_MIN_PX = { '4': '240px', '3': '320px', '2': '460px' };
   $('#density-seg').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b) return;
     $$('#density-seg button').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
-    document.documentElement.style.setProperty('--grid-cols', b.dataset.d);
+    const minPx = DENSITY_MIN_PX[b.dataset.d] || '260px';
+    document.documentElement.style.setProperty('--card-min', minPx);
     document.body.classList.toggle('density-s', b.dataset.d >= 4);
     savePref(PREF_KEYS.density, b.dataset.d);
   });
@@ -2627,7 +2663,11 @@ function navigateLightbox(delta) {
   // Restore persisted UI prefs before first paint
   if (loadPref(PREF_KEYS.sidebar, '0') === '1') document.body.classList.add('sidebar-collapsed');
   const savedDensity = loadPref(PREF_KEYS.density, '3');
-  document.documentElement.style.setProperty('--grid-cols', savedDensity);
+  // Mirror of DENSITY_MIN_PX (declared later in bindShell). Resolves the
+  // saved data-d value to a min-width before first paint to avoid layout
+  // jank on boot.
+  const _DENSITY_BOOT = { '4': '240px', '3': '320px', '2': '460px' };
+  document.documentElement.style.setProperty('--card-min', _DENSITY_BOOT[savedDensity] || '320px');
   document.body.classList.toggle('density-s', savedDensity >= 4);
   $$('#density-seg button').forEach(b => b.classList.toggle('active', b.dataset.d === savedDensity));
   // Restore persisted sort
