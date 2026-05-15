@@ -735,14 +735,61 @@ def _get_asset(asset_id: int) -> Optional[dict]:
     return asset
 
 
-UPDATABLE_FIELDS = {"status", "notes", "shot_id", "scene", "score"}
+UPDATABLE_FIELDS = {"status", "notes", "shot_id", "scene", "score", "project", "client"}
+# Issue #33 — `filename` is handled out-of-band via _rename_asset because it
+# carries an on-disk move. `file_path` is derived (gallery dir + filename) and
+# is never user-settable directly. Everything else outside this set is rejected
+# loud (was: silently dropped, see PATCH whitelist bug).
+PATCH_ROUTED_FIELDS = {"filename"}
+PATCH_DERIVED_FIELDS = {"file_path"}
+PATCH_OOB_FIELDS = {"tags", "note"}  # tags goes to tags_json; note is the review log message
 
 
 def _patch_asset(asset_id: int, payload: dict) -> Optional[dict]:
+    """PATCH semantics:
+
+    - Fields in UPDATABLE_FIELDS land directly on the assets row.
+    - `tags` is serialized into tags_json (legacy carve-out).
+    - `filename` is routed through _rename_asset (atomic DB + on-disk move).
+    - `file_path` is rejected — derived from gallery + filename, never settable.
+    - Any other key lands in `response._ignored_fields` so silent-drops become
+      visible to callers (see #33 — director burned 10 minutes API-spelunking
+      because the server happily accepted-then-dropped filename/project/client).
+    - If a routed rename fails, the metadata updates are NOT applied — the
+      caller should fix the rename and retry, not get a half-applied row.
+    """
     conn = STATE.conn()
     row = conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
     if row is None:
         return None
+
+    # Surface unknown fields rather than silently dropping (issue #33).
+    known = UPDATABLE_FIELDS | PATCH_ROUTED_FIELDS | PATCH_DERIVED_FIELDS | PATCH_OOB_FIELDS
+    ignored = [k for k in payload.keys() if k not in known]
+    rejected_derived = [k for k in payload.keys() if k in PATCH_DERIVED_FIELDS]
+
+    # Routed rename — apply BEFORE metadata so any rename error short-circuits
+    # the rest of the patch (avoids half-applied rows on rename failures).
+    rename_warning: Optional[str] = None
+    if "filename" in payload:
+        new_name = payload["filename"]
+        if new_name and new_name != row["filename"]:
+            rename_result = _rename_asset({
+                "asset_id": asset_id,
+                "new_filename": new_name,
+                "move_file": True,
+            })
+            if not rename_result.get("ok"):
+                # Don't apply metadata — surface the rename failure to the caller
+                # so they can fix it and retry. Preserves the "atomic batch" promise.
+                return {
+                    "ok": False,
+                    "error": f"rename failed: {rename_result.get('error')}",
+                    "_ignored_fields": ignored,
+                    "_rejected_derived_fields": rejected_derived,
+                }
+            # Reload the post-rename row so changes-log shows fresh filename.
+            row = conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
 
     sets: list[str] = []
     values: list[Any] = []
@@ -765,30 +812,35 @@ def _patch_asset(asset_id: int, payload: dict) -> Optional[dict]:
         values.append(json.dumps(payload["tags"], ensure_ascii=False))
         changes["tags"] = payload["tags"]
 
-    if not sets:
-        return _get_asset(asset_id)
-
-    sets.append("last_updated_at = strftime('%s','now')")
-    conn.execute(
-        f"UPDATE assets SET {', '.join(sets)} WHERE id = ?",
-        values + [asset_id],
-    )
-
-    # If status changed, log a review row
-    old_status = row["status"]
-    new_status = changes.get("status")
-    if new_status and new_status != old_status:
+    if sets:
+        sets.append("last_updated_at = strftime('%s','now')")
         conn.execute(
-            "INSERT INTO reviews (asset_id, from_status, to_status, note) VALUES (?, ?, ?, ?)",
-            (asset_id, old_status, new_status, payload.get("note", "")),
+            f"UPDATE assets SET {', '.join(sets)} WHERE id = ?",
+            values + [asset_id],
         )
 
-    _audit("asset.patched", {
-        "asset_id": asset_id,
-        "filename": row["filename"],
-        "changes": changes,
-    })
-    return _get_asset(asset_id)
+        # If status changed, log a review row
+        old_status = row["status"]
+        new_status = changes.get("status")
+        if new_status and new_status != old_status:
+            conn.execute(
+                "INSERT INTO reviews (asset_id, from_status, to_status, note) VALUES (?, ?, ?, ?)",
+                (asset_id, old_status, new_status, payload.get("note", "")),
+            )
+
+        _audit("asset.patched", {
+            "asset_id": asset_id,
+            "filename": row["filename"],
+            "changes": changes,
+        })
+
+    asset = _get_asset(asset_id)
+    if asset is not None:
+        # Always attach the diagnostic fields so callers can detect drops.
+        # Empty lists are intentional — explicit empty signal beats absence.
+        asset["_ignored_fields"] = ignored
+        asset["_rejected_derived_fields"] = rejected_derived
+    return asset
 
 
 def _add_review(asset_id: int, payload: dict) -> Optional[dict]:

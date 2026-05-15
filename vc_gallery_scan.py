@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -223,6 +224,44 @@ def _existing_fingerprint(conn, file_path: str) -> tuple | None:
     return tuple(r) if r else None
 
 
+def _find_renamed_ghost(conn, gallery_dir: str, size_bytes: int, mtime: float) -> int | None:
+    """Issue #33 — detect a renamed-on-disk file before inserting a duplicate row.
+
+    Returns the asset id of an existing row that:
+      - Lives in the same gallery directory (matched by file_path prefix),
+      - Has the same `size_bytes`,
+      - Has a `file_modified_at` within 1 second of the new file's mtime
+        (POSIX `os.rename` preserves mtime; allow tiny float drift),
+      - Has a `file_path` that NO LONGER EXISTS on disk (ghost row).
+
+    Only returns when EXACTLY ONE row matches — ambiguous matches (multiple
+    candidates) fall through to normal insert because guessing would risk
+    overwriting the wrong row's metadata.
+
+    Caller treats a returned id as "rename detected — UPDATE this row's
+    file_path/filename/sidecar_path instead of inserting a fresh row".
+    """
+    # Same-gallery filter: file_path starts with the gallery dir + sep.
+    # Cheap LIKE for the prefix; the exists-check below does the heavy lifting.
+    sep = os.sep
+    prefix = gallery_dir.rstrip(sep) + sep
+    cur = conn.execute(
+        "SELECT id, file_path, file_modified_at FROM assets "
+        "WHERE size_bytes = ? AND file_path LIKE ? "
+        "AND abs(file_modified_at - ?) < 1.0",
+        (size_bytes, prefix + "%", mtime),
+    )
+    candidates = []
+    for r in cur:
+        # Ghost-check: file_path no longer exists on disk
+        if not Path(r["file_path"]).exists():
+            candidates.append(r["id"])
+            if len(candidates) > 1:
+                # Ambiguous — bail out, fall through to normal insert
+                return None
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _upsert_asset(conn, row: dict) -> tuple[int, str]:
     """Insert or update an asset. Returns (asset_id, 'added' | 'updated' | 'unchanged').
 
@@ -236,6 +275,37 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
     """
     existing = _existing_fingerprint(conn, row["file_path"])
     if existing is None:
+        # Issue #33 — before inserting, check if this is a renamed version of
+        # a row we already have. POSIX `os.rename` preserves size+mtime, so a
+        # ghost row with the same fingerprint AND a stale file_path is
+        # almost certainly the same logical asset that just got renamed.
+        # Reconciling it preserves status/scene/sidecar metadata instead of
+        # creating a duplicate row and a unique-constraint collision on the
+        # next /api/rename.
+        gallery_dir = str(Path(row["file_path"]).parent)
+        ghost_id = _find_renamed_ghost(
+            conn, gallery_dir, row["size_bytes"], row["file_modified_at"]
+        )
+        if ghost_id is not None:
+            # SURGICAL update — only touch the columns that describe the
+            # file's location on disk. Preserves the ghost row's business
+            # metadata (status, scene, shot_id, model, workflow, client,
+            # project, etc) so a rename doesn't wipe what the director set.
+            # If the renamed file has a fresh sidecar with new metadata, a
+            # follow-on scan will detect that via the normal "updated" path.
+            conn.execute(
+                """UPDATE assets
+                   SET file_path = ?, filename = ?, sidecar_path = ?, has_sidecar = ?,
+                       size_bytes = ?, file_modified_at = ?,
+                       last_updated_at = strftime('%s','now')
+                   WHERE id = ?""",
+                (row["file_path"], row["filename"], row["sidecar_path"],
+                 row["has_sidecar"], row["size_bytes"], row["file_modified_at"],
+                 ghost_id),
+            )
+            _upsert_job(conn, ghost_id, row)
+            return ghost_id, "renamed"
+
         # New file → probe dimensions before insert.
         dims = probe_media_dimensions(row["file_path"])
         row["width"] = dims["width"]

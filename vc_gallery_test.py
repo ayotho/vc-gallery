@@ -259,8 +259,61 @@ def main(argv: list[str] | None = None) -> int:
     test_open_in_finder_feedback(t)
     test_dimensions_populated(t)
     test_scanner_preserves_prompts(t)
+    test_patch_whitelist_33(t)
 
     return t.summary()
+
+
+def test_patch_whitelist_33(t: Tester) -> None:
+    """Issue #33 — PATCH /api/assets/<id> must:
+      - accept `project` + `client` (silently dropped previously),
+      - surface unknown fields in `_ignored_fields` (was: silent),
+      - reject `file_path` via `_rejected_derived_fields`.
+
+    Read-modify-restore so the live DB is unchanged after the test.
+    """
+    print("\n[11/11] PATCH whitelist (#33)")
+    status, data = t.req("GET", "/api/assets?limit=20")
+    items = data.get("items", []) if isinstance(data, dict) else []
+    # Skip drafts — rename semantics differ.
+    target = next((a for a in items if a.get("status") != "draft"), None)
+    if not target:
+        t.check("patch-whitelist precondition (non-draft asset)", False, "no asset to test with")
+        return
+    aid = target["id"]
+    orig_project = target.get("project") or None
+    orig_client = target.get("client") or None
+
+    # Accepts project + client
+    status, body = t.req("PATCH", f"/api/assets/{aid}", {
+        "project": "ZZZ_TEST_PROJECT", "client": "ZZZ_TEST_CLIENT",
+    })
+    t.check("PATCH returns 200", status == 200, f"got {status}: {body}")
+    t.check("project applied", isinstance(body, dict) and body.get("project") == "ZZZ_TEST_PROJECT")
+    t.check("client applied", isinstance(body, dict) and body.get("client") == "ZZZ_TEST_CLIENT")
+    t.check("no fields ignored on known keys",
+            isinstance(body, dict) and body.get("_ignored_fields") == [])
+
+    # Unknown fields surfaced
+    status, body = t.req("PATCH", f"/api/assets/{aid}", {
+        "fake_field_zz": "x", "another_fake_yy": 42,
+    })
+    ignored = set(body.get("_ignored_fields", []) if isinstance(body, dict) else [])
+    t.check("unknown PATCH fields surface in _ignored_fields",
+            {"fake_field_zz", "another_fake_yy"}.issubset(ignored),
+            f"got: {ignored}")
+
+    # file_path rejected
+    status, body = t.req("PATCH", f"/api/assets/{aid}", {"file_path": "/tmp/should_not_apply.png"})
+    rejected = body.get("_rejected_derived_fields", []) if isinstance(body, dict) else []
+    t.check("file_path is rejected as derived",
+            isinstance(rejected, list) and "file_path" in rejected,
+            f"got: {rejected}")
+
+    # Restore original project + client
+    t.req("PATCH", f"/api/assets/{aid}", {
+        "project": orig_project, "client": orig_client,
+    })
 
 
 def test_dimensions_populated(t: Tester) -> None:
