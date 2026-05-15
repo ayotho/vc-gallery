@@ -57,7 +57,7 @@ GET  /api/assets            -> {items[], total, limit, offset}
   ?model=kling3_0           filter by model
   ?shot_id=SH450            filter by shot
   ?q=nathan                 full-text search (filename, shot_id, prompt)
-  ?sort=recent|name|status|shot
+  ?sort=recent|oldest|name|name-desc|id|id-desc|status|shot|model
   ?limit=50&offset=0
 
 GET  /api/assets/{id}       -> full asset detail + prompt + refs_resolved + review_history
@@ -82,6 +82,17 @@ GET  /api/facets            -> {status: {review: 45, hero: 12, ...}, source_type
 | `duration_sec` | Video duration |
 | `media_type` | "image" or "video" |
 | `thumb_url` | `/thumb/<sha>.jpg` path for thumbnail |
+
+### Update asset fields (PATCH)
+
+```
+PATCH /api/assets/{id}
+  body: {shot_id: "SH450", scene: "corridor", notes: "v2 with better lighting", score: 8.5}
+```
+
+Updatable fields: `status`, `shot_id`, `scene`, `notes`, `score`, `tags` (array)
+
+Use this to tag shot IDs after generating, add notes, or update scene labels. The dashboard has inline editing for shot_id and scene in the drawer.
 
 ### Status changes
 
@@ -245,6 +256,12 @@ To actually see a ref image, use the Read tool on the raw path (available in `re
 ## Replaces the old viewer
 
 The old `viewer.py` on port 8766 is deprecated. All references to port 8766, `image_outputs.json`, or `POST /api/add` are legacy. This gallery (port 8770) is the canonical system.
+
+## Known gaps
+
+- **No auto-start.** Server must be started manually each session. No launchd/systemd service yet.
+- **Cross-platform ref paths.** If image-chef on Mac writes refs with `/Users/ayo/...` paths, they won't resolve when viewed on Windows (and vice versa). The gallery still shows the asset but ref previews break. Workaround: set `VC_REF_ALLOW_ROOTS` env var to include the local equivalent path.
+- **Scanner backfill for shot_id** (issue #2) is not yet implemented. Shot IDs are only populated when: (a) the wrapper/draft sets one explicitly, or (b) you edit it manually in the drawer. A regex-based auto-tagger from filenames (e.g. `SH450_kling_v1.mp4` -> `SH450`) would cover legacy assets.
 
 ## Server not running?
 
