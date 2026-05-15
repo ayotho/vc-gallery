@@ -43,11 +43,13 @@
   --topbar-h:    64px;
 
   /* Density — controls minimum card width, NOT fixed column count.
-     The grid uses repeat(auto-fill, minmax(--card-min, 1fr)) so cards
-     compensate when the drawer expands or the viewport narrows:
-     fewer columns fit when space is tight, more when it's roomy.
-     Density buttons map: S=180px, M=260px, L=380px. */
-  --card-min: 260px;
+     The grid uses repeat(auto-fit, minmax(--card-min, 1fr)) so cards
+     COMPRESS the way the director expects: as the drawer expands and
+     the canvas narrows, columns drop AND remaining cards grow to fill
+     the space (instead of staying small in too many columns).
+     Density buttons map: S=240px, M=320px, L=460px — bigger mins than
+     v1 so column transitions are more dramatic when resizing. */
+  --card-min: 320px;
 }
 
 /* Collapsible state — toggled by classes on <body>. CSS vars cascade to
@@ -215,7 +217,13 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
    No need for a wide-screen media query — auto-fill scales naturally. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+  /* auto-fit (not auto-fill) — collapses empty column slots so the
+     remaining cards grow to fill the available canvas width.
+     Combined with the bigger --card-min values per density, this makes
+     compression dramatic: as drawer widens, cards drop one column at a
+     time and the survivors get bigger, exactly matching the
+     "long row of bigger cards" behaviour the director described. */
+  grid-template-columns: repeat(auto-fit, minmax(var(--card-min), 1fr));
   gap: 18px;
   margin-bottom: var(--s-md);
 }
@@ -458,7 +466,11 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .history b { font-weight: 540; }
 .history .when { font-family: var(--mono); font-size: 11px; letter-spacing: 0.4px; color: #8a877f; text-transform: uppercase; }
 
-.actions { position: sticky; bottom: 0; margin: var(--s-xl) calc(var(--s-md) * -1) calc(var(--s-section) * -1); padding: var(--s-md); background: linear-gradient(180deg, rgba(255,255,255,0) 0%, var(--canvas) 30%); border-top: 1px solid var(--hairline-soft); }
+/* Sticky bottom with breathing room — was: tight `padding: var(--s-md)` only,
+   which let the action pills hug the viewport edge with no margin. Bumping
+   the bottom-side padding so the buttons + "Open in Finder/Copy path" row
+   have visible breathing space below them. */
+.actions { position: sticky; bottom: 0; margin: var(--s-xl) calc(var(--s-md) * -1) calc(var(--s-section) * -1); padding: var(--s-md) var(--s-md) var(--s-lg); background: linear-gradient(180deg, rgba(255,255,255,0) 0%, var(--canvas) 30%); border-top: 1px solid var(--hairline-soft); }
 .actions .primary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
 .act-btn { height: 40px; background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--r-pill); font-size: 13px; font-weight: 480; letter-spacing: -0.1px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .act-btn:hover { border-color: var(--ink); }
@@ -2094,7 +2106,7 @@ function bindTopbar() {
   // viewport narrows. Button data-d values stay 2/3/4 for backward compat
   // with stored prefs; they map to: 4=small (180px), 3=medium (260px),
   // 2=large (380px).
-  const DENSITY_MIN_PX = { '4': '180px', '3': '260px', '2': '380px' };
+  const DENSITY_MIN_PX = { '4': '240px', '3': '320px', '2': '460px' };
   $('#density-seg').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b) return;
@@ -2595,8 +2607,8 @@ function navigateLightbox(delta) {
   // Mirror of DENSITY_MIN_PX (declared later in bindShell). Resolves the
   // saved data-d value to a min-width before first paint to avoid layout
   // jank on boot.
-  const _DENSITY_BOOT = { '4': '180px', '3': '260px', '2': '380px' };
-  document.documentElement.style.setProperty('--card-min', _DENSITY_BOOT[savedDensity] || '260px');
+  const _DENSITY_BOOT = { '4': '240px', '3': '320px', '2': '460px' };
+  document.documentElement.style.setProperty('--card-min', _DENSITY_BOOT[savedDensity] || '320px');
   document.body.classList.toggle('density-s', savedDensity >= 4);
   $$('#density-seg button').forEach(b => b.classList.toggle('active', b.dataset.d === savedDensity));
   // Restore persisted sort
