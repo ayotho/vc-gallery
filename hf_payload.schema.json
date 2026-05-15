@@ -101,17 +101,17 @@
     },
     "client": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]*$",
       "minLength": 1,
       "maxLength": 64,
-      "description": "Lowercase slug; matches client folder name under clients/"
+      "description": "Client identifier. Matches canonical client folder name under clients/ (e.g. BTW_Documentary, Malcolm-Callux). Pattern relaxed 2026-05-15 to allow uppercase + underscore-prefixed names — studio canonical names are not lowercase slugs."
     },
     "project": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+      "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]*$",
       "minLength": 1,
       "maxLength": 64,
-      "description": "Lowercase slug; maps to `episode` in sidecar frontmatter"
+      "description": "Project identifier (e.g. Episode_9, Pilot, Sevensight_Hero). Pattern relaxed 2026-05-15 to allow uppercase + underscore-prefixed names."
     },
     "workflow": {
       "type": "string",
@@ -261,9 +261,9 @@
     },
     "shot_id": {
       "type": "string",
-      "pattern": "^(SH\\d+[A-Za-z]{0,4}|)$",
-      "maxLength": 16,
-      "description": "Shot identifier (e.g. SH1430, SH050C, SH040ABC compound multi-panel IDs) or empty string"
+      "pattern": "^([A-Za-z][A-Za-z0-9_-]*|)$",
+      "maxLength": 32,
+      "description": "Shot identifier. Canonical form is SH<digits>[A-Za-z]{0,4} (e.g. SH1430, SH050C, SH040ABC). Also accepts free-text identifiers for drafts/experiments (e.g. TEST, RND_dreamscape, cref_a) or empty string. Pattern relaxed 2026-05-15 to support exploratory work."
     },
     "session": {
       "type": "string",

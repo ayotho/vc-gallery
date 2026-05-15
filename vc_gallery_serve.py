@@ -1156,7 +1156,15 @@ def _delete_draft(asset_id: int) -> dict:
 
 def _transition_fire_status(asset_id: int | None, exit_code: int) -> None:
     """Transition a firing draft based on wrapper exit code.
-    Fixes #18 — only called when proc.poll() returns a result."""
+    Fixes #18 — only called when proc.poll() returns a result.
+
+    Patch 2026-05-15: on failure, return to status='draft' instead of
+    'rejected'. Failed fires are usually fixable by the director (schema
+    typo, filename collision, stale model_id) — keeping the draft visible
+    in the Drafts tab lets them edit the payload and refire. Setting
+    'rejected' yanked it out of the Drafts view and surfaced it nowhere
+    obvious, so the director thought the draft was gone.
+    """
     if asset_id is None:
         return
     try:
@@ -1164,7 +1172,7 @@ def _transition_fire_status(asset_id: int | None, exit_code: int) -> None:
         row = conn.execute("SELECT status FROM assets WHERE id = ?", (asset_id,)).fetchone()
         if row is None or row["status"] != "firing":
             return
-        new_status = "review" if exit_code == 0 else "rejected"
+        new_status = "review" if exit_code == 0 else "draft"
         conn.execute(
             "UPDATE assets SET status = ?, last_updated_at = strftime('%s','now') WHERE id = ?",
             (new_status, asset_id),
