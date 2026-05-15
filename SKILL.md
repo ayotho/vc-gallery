@@ -1,9 +1,9 @@
 ---
-name: vc-canvas
+name: select
 description: "Visual Chef Gallery — the central asset dashboard for all AI-generated images and videos. Use when: reviewing/searching assets, staging drafts for generation, firing wrapper jobs, checking fire status, reading the director's selection, or pushing new assets. Runs at localhost:8770. Replaces the old 8766 viewer entirely."
 ---
 
-# /vc-canvas — Visual Chef Gallery
+# /select — Visual Chef Gallery
 
 The gallery server at `http://127.0.0.1:8770/` is the single source of truth for all generated assets (images + videos) across every client project. Every agent (image-chef, video-chef, acquisition-chef) talks to it.
 
@@ -26,8 +26,8 @@ Port 8770. Localhost only. One process serves one director.
 
 | Trigger | Action |
 |---------|--------|
-| `/canvas` or "look at this", "the selected one" | Read selection (see Selection Bridge below) |
-| `/canvas 2095` or `#2095` | Fetch specific asset |
+| `/select` or "look at this", "the selected one" | Read selection (see Selection Bridge below) |
+| `/select 2095` or `#2095` | Fetch specific asset |
 | "stage a draft", "queue this gen" | POST /api/draft |
 | "fire it", "run the draft" | POST /api/draft/{id}/fire |
 | "what's firing", "check status" | GET /api/fires |

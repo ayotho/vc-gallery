@@ -1,19 +1,19 @@
 ---
-name: canvas
-description: Bridge between vc-canvas dashboard (localhost:8770) and this Claude session. Lets the director say "look at this", "the selected one", "use these N", or quote an asset ID like "#2095" — Claude reads the active selection from /api/selection and Reads the asset file(s) so it can see images/videos without the director copy-pasting paths. Use whenever the director references something they're looking at in the gallery, OR explicitly says /canvas, OR mentions an asset ID like #2095, OR uses plural pronouns ("these", "those", "the selected ones") that imply a current gallery pick.
+name: select
+description: Bridge between vc-canvas dashboard (localhost:8770) and this Claude session. Lets the director say "look at this", "the selected one", "use these N", or quote an asset ID like "#2095" — Claude reads the active selection from /api/selection and Reads the asset file(s) so it can see images/videos without the director copy-pasting paths. Use whenever the director references something they're looking at in the gallery, OR explicitly says /select, OR mentions an asset ID like #2095, OR uses plural pronouns ("these", "those", "the selected ones") that imply a current gallery pick.
 ---
 
-# /canvas — selection bridge to the vc-canvas gallery
+# /select — selection bridge to the vc-canvas gallery
 
 The director runs the vc-canvas dashboard at `http://127.0.0.1:8770/`. When they click a card (single-select) or Cmd-click multiple cards (multi-select), the dashboard mirrors that selection to the server. This skill reads it.
 
 ## When to invoke
 
-- User types `/canvas` (with or without an arg) → always
+- User types `/select` (with or without an arg) → always
 - User says "look at this", "the selected one", "what I'm looking at", "the one I'm on" → fetch single
 - User says "use these", "use those N", "compare these", "what about these" → fetch multi
 - User quotes an asset ID like `#2095`, `asset 2095`, `id 2095` → fetch that ID specifically
-- User says "show me SH450" — first try the search endpoint with `q=SH450`, then `/canvas N` on the best hit
+- User says "show me SH450" — first try the search endpoint with `q=SH450`, then `/select N` on the best hit
 
 If selection is empty AND no ID was quoted, tell the director: "Nothing selected in the canvas. Click an asset in the gallery (or Cmd-click multiple) and try again." Do not guess; do not use last-known.
 
@@ -51,7 +51,7 @@ Each asset in the response carries:
    - 0 → empty-selection message, stop.
    - 1 → single asset detail; Read the `file_path` so you can SEE the image (videos: Read the path to get metadata, but acknowledge you can't visually inspect frames — note duration + dimensions instead).
    - 2+ → enumerate all. For each, present the headline (`#id · shot_id · filename · status`) and a one-line summary. Then ask the director what they want to do with the set — or if their prompt already implied an action ("use these as refs", "compare these"), just do it.
-3. **Always cite asset IDs** in your response so the director can pivot ("ok now /canvas 2050").
+3. **Always cite asset IDs** in your response so the director can pivot ("ok now /select 2050").
 4. **Surface broken state** clearly:
    - If `prompt` is empty: say "no prompt recorded (raw drop or legacy)".
    - If `refs_resolved` is empty AND the file looks generated: say "no refs in DB (pre-2026-05-14 wrapper data was wiped by an old scanner bug — see issue #19)".
@@ -61,11 +61,11 @@ Each asset in the response carries:
 
 | Form | Behavior |
 |---|---|
-| `/canvas` | Use current `/api/selection` |
-| `/canvas 2095` | Fetch `/api/assets/2095` directly (ignores current selection) |
-| `/canvas SH450` | Best-effort: hit `/api/assets?q=SH450&limit=10`, present top hit + offer to switch to another |
-| `/canvas selection` | Synonym for plain `/canvas` |
-| `/canvas clear` | DELETE `/api/selection` to clear server-side selection (rarely needed) |
+| `/select` | Use current `/api/selection` |
+| `/select 2095` | Fetch `/api/assets/2095` directly (ignores current selection) |
+| `/select SH450` | Best-effort: hit `/api/assets?q=SH450&limit=10`, present top hit + offer to switch to another |
+| `/select selection` | Synonym for plain `/select` |
+| `/select clear` | DELETE `/api/selection` to clear server-side selection (rarely needed) |
 
 ## Examples
 
@@ -81,7 +81,7 @@ Each asset in the response carries:
 3. Hand off to image-chef or video-chef as appropriate, passing the absolute paths as the refs for the new generation.
 
 **Director says** "#2095" with no other context:
-1. Treat as `/canvas 2095`.
+1. Treat as `/select 2095`.
 2. Fetch + summarize. Wait for their next prompt.
 
 ## Hard rules
