@@ -568,30 +568,50 @@ def _list_assets(params: dict) -> dict:
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
-def _facet_counts() -> dict:
+def _facet_counts(params: dict | None = None) -> dict:
     """Return counts by status / source_type / media_type for filter chips.
+
     Patch 2026-05-14: added `scene` and `shot_id` facets so the sidebar can
     offer per-scene/per-shot filtering (VC-C: video reviewers can't group by
     scene without this). `shot_id` cap at 200 distinct values to keep response
     small on big galleries.
+
+    Patch 2026-05-15 (cross-filter facets): facet counts now respect the
+    currently active filter set. Each facet's count uses ALL active filters
+    EXCEPT its own axis — standard faceted-search behaviour. Means when the
+    director has `scene=emerald_dmt` applied, the status sidebar shows
+    'Accepted 5 / Hero 3' (within emerald_dmt) instead of the misleading
+    global counts. Each axis still ignores its own filter so navigation
+    stays informative ('if I clicked Hero, how many emerald_dmt would
+    appear?').
     """
     conn = STATE.conn()
+    params = params or {}
     out: dict[str, dict[str, int]] = {}
-    for col in ("status", "source_type", "media_type", "model", "workflow", "scene"):
-        out[col] = {
-            r[col]: r["c"]
-            for r in conn.execute(
-                f"SELECT {col}, count(*) c FROM assets WHERE {col} IS NOT NULL AND {col} != '' GROUP BY {col} ORDER BY c DESC"
-            )
-        }
-    # shot_id can have many distinct values — cap for UI sanity
-    out["shot_id"] = {
-        r["shot_id"]: r["c"]
-        for r in conn.execute(
-            "SELECT shot_id, count(*) c FROM assets WHERE shot_id IS NOT NULL AND shot_id != '' "
-            "GROUP BY shot_id ORDER BY c DESC LIMIT 200"
+
+    facet_cols = ("status", "source_type", "media_type", "model", "workflow", "scene")
+    for col in facet_cols:
+        # Build WHERE from active filters EXCLUDING this facet's own axis
+        scoped_params = {k: v for k, v in params.items() if k != col}
+        where, values = _build_where(scoped_params)
+        sql = (
+            f"SELECT a.{col}, count(*) c "
+            "FROM assets a LEFT JOIN prompts p ON p.asset_id = a.id "
+            f"{where}{' AND' if where else ' WHERE'} a.{col} IS NOT NULL AND a.{col} != '' "
+            f"GROUP BY a.{col} ORDER BY c DESC"
         )
-    }
+        out[col] = {r[col]: r["c"] for r in conn.execute(sql, values)}
+
+    # shot_id can have many distinct values — cap for UI sanity
+    scoped_params = {k: v for k, v in params.items() if k != "shot_id"}
+    where, values = _build_where(scoped_params)
+    sql = (
+        "SELECT a.shot_id, count(*) c "
+        "FROM assets a LEFT JOIN prompts p ON p.asset_id = a.id "
+        f"{where}{' AND' if where else ' WHERE'} a.shot_id IS NOT NULL AND a.shot_id != '' "
+        "GROUP BY a.shot_id ORDER BY c DESC LIMIT 200"
+    )
+    out["shot_id"] = {r["shot_id"]: r["c"] for r in conn.execute(sql, values)}
     return out
 
 
@@ -1595,7 +1615,7 @@ class Handler(BaseHTTPRequestHandler):
             if STATE.folder is None:
                 self._send_error_json(409, "no working folder set")
                 return
-            self._send_json(200, _facet_counts())
+            self._send_json(200, _facet_counts(params))
             return
         if path == "/api/assets":
             if STATE.folder is None:
