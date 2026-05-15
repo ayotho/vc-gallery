@@ -543,9 +543,14 @@ def _list_assets(params: dict) -> dict:
     #     surfaces first (VC-C: was just alphabetical).
     order = {
         "recent": "a.file_modified_at DESC",
+        "oldest": "a.file_modified_at ASC",
         "name": "a.filename ASC",
+        "name-desc": "a.filename DESC",
         "status": "a.status, a.file_modified_at DESC, a.filename",
         "shot": "a.shot_id IS NULL, a.shot_id = '', a.shot_id, a.filename",
+        "model": "a.model IS NULL, a.model, a.file_modified_at DESC",
+        "id": "a.id ASC",
+        "id-desc": "a.id DESC",
     }.get(sort, "a.file_modified_at DESC")
 
     rows = conn.execute(

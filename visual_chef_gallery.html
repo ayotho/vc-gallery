@@ -781,10 +781,15 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
       <div class="side-group">
         <div class="side-label">Sort</div>
         <div class="select"><span id="sort-label">Most recent</span><span class="chev">▾</span><select id="sort">
-          <option value="recent">Most recent</option>
+          <option value="recent">Newest first</option>
+          <option value="oldest">Oldest first</option>
           <option value="name">Filename A→Z</option>
+          <option value="name-desc">Filename Z→A</option>
+          <option value="id">ID ascending</option>
+          <option value="id-desc">ID descending</option>
           <option value="status">Status</option>
           <option value="shot">Shot ID</option>
+          <option value="model">Model</option>
         </select></div>
       </div>
     </aside>
@@ -977,7 +982,7 @@ const state = {
   facets: {},
   totalAssets: 0,
   filters: { status: '', source_type: '', model: '', workflow: '', scene: '', media_type: '', has_prompt: false, has_sidecar: false, q: '' },
-  sort: 'recent',
+  sort: loadPref('vc.gallery.sort', 'recent'),
   items: [],
   total: 0,
   offset: 0,
@@ -1039,7 +1044,7 @@ function pathFolder(p) {
 
 function cardAR() { return DEFAULT_AR; }
 
-const PREF_KEYS = { sidebar: 'vc.gallery.sidebarCollapsed', density: 'vc.gallery.density' };
+const PREF_KEYS = { sidebar: 'vc.gallery.sidebarCollapsed', density: 'vc.gallery.density', sort: 'vc.gallery.sort' };
 
 function loadPref(k, fallback) {
   try { const v = localStorage.getItem(k); return v === null ? fallback : v; }
@@ -1886,7 +1891,7 @@ function bindFilters() {
   $('#refine-model').addEventListener('change', (e) => { state.filters.model = e.target.value; refresh(); });
   $('#refine-workflow').addEventListener('change', (e) => { state.filters.workflow = e.target.value; refresh(); });
   $('#refine-scene').addEventListener('change', (e) => { state.filters.scene = e.target.value; refresh(); });
-  $('#sort').addEventListener('change', (e) => { state.sort = e.target.value; $('#sort-label').textContent = e.target.selectedOptions[0].textContent; refresh(); });
+  $('#sort').addEventListener('change', (e) => { state.sort = e.target.value; $('#sort-label').textContent = e.target.selectedOptions[0].textContent; savePref(PREF_KEYS.sort, state.sort); refresh(); });
 
   $$('.clear').forEach(c => c.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -2488,6 +2493,12 @@ function navigateLightbox(delta) {
   document.documentElement.style.setProperty('--grid-cols', savedDensity);
   document.body.classList.toggle('density-s', savedDensity >= 4);
   $$('#density-seg button').forEach(b => b.classList.toggle('active', b.dataset.d === savedDensity));
+  // Restore persisted sort
+  const sortEl = $('#sort');
+  if (sortEl && state.sort !== 'recent') {
+    sortEl.value = state.sort;
+    $('#sort-label').textContent = sortEl.selectedOptions[0]?.textContent || 'Most recent';
+  }
 
   try {
     await refreshFolder();
