@@ -1,4 +1,4 @@
-# vc-canvas roadmap
+# vc-gallery roadmap
 
 The plan, phased. Each item below maps to a GitHub issue + milestone — `gh issue list --milestone "v0.3 — Obsidian Bridge MVP"` shows the live state.
 
@@ -8,7 +8,7 @@ The plan, phased. Each item below maps to a GitHub issue + milestone — `gh iss
 
 ## v0.3 — Obsidian Bridge MVP
 
-The bridge between vc-canvas (asset truth) and the Obsidian vault (narrative truth). After this lands, every wrapper landing auto-embeds into the right shot card with zero director touch.
+The bridge between vc-gallery (asset truth) and the Obsidian vault (narrative truth). After this lands, every wrapper landing auto-embeds into the right shot card with zero director touch.
 
 1. **Vault path resolver + `VC_OBSIDIAN_VAULT_ROOT` env var** — server learns where the vault is + how to resolve per-client/project paths.
 2. **Scanner: backfill `shot_id` from filename regex** — unlocks every other bridge feature for the existing 2089-asset corpus.

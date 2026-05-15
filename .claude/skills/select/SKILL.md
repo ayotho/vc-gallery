@@ -1,11 +1,11 @@
 ---
 name: select
-description: Bridge between vc-canvas dashboard (localhost:8770) and this Claude session. Lets the director say "look at this", "the selected one", "use these N", or quote an asset ID like "#2095" — Claude reads the active selection from /api/selection and Reads the asset file(s) so it can see images/videos without the director copy-pasting paths. Use whenever the director references something they're looking at in the gallery, OR explicitly says /select, OR mentions an asset ID like #2095, OR uses plural pronouns ("these", "those", "the selected ones") that imply a current gallery pick.
+description: Bridge between vc-gallery dashboard (localhost:8770) and this Claude session. Lets the director say "look at this", "the selected one", "use these N", or quote an asset ID like "#2095" — Claude reads the active selection from /api/selection and Reads the asset file(s) so it can see images/videos without the director copy-pasting paths. Use whenever the director references something they're looking at in the gallery, OR explicitly says /select, OR mentions an asset ID like #2095, OR uses plural pronouns ("these", "those", "the selected ones") that imply a current gallery pick.
 ---
 
-# /select — selection bridge to the vc-canvas gallery
+# /select — selection bridge to the vc-gallery gallery
 
-The director runs the vc-canvas dashboard at `http://127.0.0.1:8770/`. When they click a card (single-select) or Cmd-click multiple cards (multi-select), the dashboard mirrors that selection to the server. This skill reads it.
+The director runs the vc-gallery dashboard at `http://127.0.0.1:8770/`. When they click a card (single-select) or Cmd-click multiple cards (multi-select), the dashboard mirrors that selection to the server. This skill reads it.
 
 ## When to invoke
 
@@ -93,7 +93,7 @@ Each asset in the response carries:
 
 ## Caveats
 
-- The vc-canvas server must be running at `127.0.0.1:8770`. If `curl` returns a connection-refused, ask the director to start the server (`cd "/Users/ayo/Coding projects/vc-canvas" && python3 vc_gallery_serve.py`).
+- The vc-gallery server must be running at `127.0.0.1:8770`. If `curl` returns a connection-refused, ask the director to start the server (`cd "/Users/ayo/Coding projects/vc-gallery" && python3 vc_gallery_serve.py`).
 - Selection is **per-folder**. If the director switched gallery folders mid-conversation, the selection auto-clears.
 - Selection is **ephemeral**. If the server restarted, the selection is empty. Director re-clicks to restore.
 - For the ~600 legacy wrapper-fired assets whose prompts were wiped by the 2026-05-13 scanner bug, `prompt` and `refs_resolved` come back empty. Note this explicitly when surfacing them; don't pretend the data is there.

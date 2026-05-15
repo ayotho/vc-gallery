@@ -1,4 +1,4 @@
-# vc-canvas
+# vc-gallery
 
 > The local triage cockpit that turns hundreds of AI-generated media files into a reviewable narrative. One SQLite per gallery, one server, one director, many agents.
 
@@ -64,7 +64,7 @@ What this will never become:
 ## Quick start
 
 ```bash
-cd "/Users/ayo/Coding projects/vc-canvas"
+cd "/Users/ayo/Coding projects/vc-gallery"
 python3 vc_gallery_serve.py
 # open http://localhost:8770/
 ```
@@ -180,4 +180,4 @@ MIT. See [LICENSE](LICENSE).
 **See also:**
 - [ROADMAP.md](ROADMAP.md) — phased plan + open milestones
 - [`.github/ISSUE_TEMPLATE/bug.md`](.github/ISSUE_TEMPLATE/bug.md) — the mandatory backlog format
-- GitHub Issues at https://github.com/ayotho/vc-canvas/issues — current backlog
+- GitHub Issues at https://github.com/ayotho/vc-gallery/issues — current backlog

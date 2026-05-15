@@ -1,5 +1,5 @@
 [project]
-name = "vc-canvas"
+name = "vc-gallery"
 version = "0.2.0"
 description = "Visual Chef Gallery — local review dashboard for AI-generated media"
 readme = "README.md"
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-vc-canvas = "vc_gallery_serve:main"
+vc-gallery = "vc_gallery_serve:main"
 
 [tool.setuptools]
 py-modules = [

@@ -1,9 +1,9 @@
 ---
-name: vc-canvas
+name: vc-gallery
 description: "Visual Chef Gallery — the central asset dashboard for all AI-generated images and videos. Use when: reviewing/searching assets, staging drafts for generation, firing wrapper jobs, checking fire status, reading the director's selection, or pushing new assets. Runs at localhost:8770. Replaces the old 8766 viewer entirely."
 ---
 
-# /vc-canvas — Visual Chef Canvas (Gallery)
+# /vc-gallery — Visual Chef Canvas (Gallery)
 
 The gallery server at `http://127.0.0.1:8770/` is the single source of truth for all generated assets (images + videos) across every client project. Every agent (image-chef, video-chef, acquisition-chef) talks to it.
 
@@ -11,10 +11,10 @@ The gallery server at `http://127.0.0.1:8770/` is the single source of truth for
 
 ```bash
 # Windows (this PC)
-python3 "C:/Users/aytho/vc-canvas/vc_gallery_serve.py"
+python3 "C:/Users/aytho/vc-gallery/vc_gallery_serve.py"
 
 # Mac
-python3 "/Users/ayo/Coding projects/vc-canvas/vc_gallery_serve.py"
+python3 "/Users/ayo/Coding projects/vc-gallery/vc_gallery_serve.py"
 
 # With explicit folder
 python3 vc_gallery_serve.py --folder "/path/to/working/folder"

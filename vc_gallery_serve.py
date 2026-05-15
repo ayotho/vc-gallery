@@ -1908,7 +1908,7 @@ class Handler(BaseHTTPRequestHandler):
         # was added as a project-root allow. When the repo lived at
         # `<...>/arsenal/00-utilities/`, parent.parent resolved to the AI
         # visual chef project root — fine. After the 2026-05-14 move to
-        # `/Users/ayo/Coding projects/vc-canvas/`, parent.parent resolved to
+        # `/Users/ayo/Coding projects/vc-gallery/`, parent.parent resolved to
         # `/Users/ayo/` itself — which would let /ref read `~/Documents`,
         # `~/Downloads`, etc. Dropped entirely; only the gallery folder,
         # `~/Desktop`, `/tmp`, and an explicit env-var allowlist are valid.
