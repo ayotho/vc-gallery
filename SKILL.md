@@ -1,9 +1,9 @@
 ---
-name: select
+name: vc-canvas
 description: "Visual Chef Gallery — the central asset dashboard for all AI-generated images and videos. Use when: reviewing/searching assets, staging drafts for generation, firing wrapper jobs, checking fire status, reading the director's selection, or pushing new assets. Runs at localhost:8770. Replaces the old 8766 viewer entirely."
 ---
 
-# /select — Visual Chef Gallery
+# /vc-canvas — Visual Chef Canvas (Gallery)
 
 The gallery server at `http://127.0.0.1:8770/` is the single source of truth for all generated assets (images + videos) across every client project. Every agent (image-chef, video-chef, acquisition-chef) talks to it.
 
