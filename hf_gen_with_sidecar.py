@@ -333,6 +333,11 @@ def _download(url: str, target: Path) -> bool:
 def _write_db_row(payload: dict, target: Path, prompt: str, refs: list[str], job_id: Optional[str] = None) -> bool:
     """Write the asset directly to the gallery DB (no sidecar). Used when
     payload['skip_sidecar'] is true — the dashboard becomes the truth.
+
+    Issue #27 — when `payload['asset_id']` is present (set by the server's
+    _fire_draft path), the row at that id is MUTATED in place rather than
+    inserting a new row. This is what merges the draft and the post-fire
+    asset into ONE logical row instead of the historical two-row split.
     """
     try:
         if str(_HERE) not in sys.path:
@@ -362,7 +367,15 @@ def _write_db_row(payload: dict, target: Path, prompt: str, refs: list[str], job
             "hf_job_url": hf_url,
             "has_sidecar": False,
         }
-        lib_local.upsert_asset_direct(conn, str(target), metadata)
+        # asset_id arrives as int or numeric string (JSON). Tolerate both.
+        asset_id_raw = payload.get("asset_id")
+        asset_id_int: Optional[int] = None
+        if asset_id_raw is not None:
+            try:
+                asset_id_int = int(asset_id_raw)
+            except (TypeError, ValueError):
+                asset_id_int = None
+        lib_local.upsert_asset_direct(conn, str(target), metadata, asset_id=asset_id_int)
         conn.close()
         return True
     except Exception as e:  # noqa: BLE001

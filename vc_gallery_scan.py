@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -236,6 +237,26 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
     """
     existing = _existing_fingerprint(conn, row["file_path"])
     if existing is None:
+        # Issue #27 (scanner debounce) — if a draft/firing row with the same
+        # filename already exists in this gallery, that wrapper owns this
+        # file's eventual row. Skip the insert; the wrapper's UPDATE (in
+        # upsert_asset_direct with asset_id=N) will flip the draft row's
+        # file_path to this real path and bring it to status=review.
+        # Without this debounce, the watcher (which scans every 3s) can
+        # race the wrapper: see the file land on disk before the wrapper
+        # finishes its db-write, insert a ghost row, then force the wrapper
+        # into a DELETE-then-UPDATE recovery. Skipping here keeps the
+        # steady state clean even mid-race.
+        gallery_dir = str(Path(row["file_path"]).parent)
+        owning_draft = conn.execute(
+            "SELECT id FROM assets "
+            "WHERE filename = ? AND status IN ('draft','firing') "
+            "AND file_path LIKE ?",
+            (row["filename"], gallery_dir.rstrip(os.sep) + os.sep + "%"),
+        ).fetchone()
+        if owning_draft is not None:
+            return owning_draft["id"], "deferred"
+
         # New file → probe dimensions before insert.
         dims = probe_media_dimensions(row["file_path"])
         row["width"] = dims["width"]
@@ -362,10 +383,12 @@ def _reconcile_renames(conn, source: Path, log_target: Path) -> int:
     """
     renames = 0
     source_str = str(source.resolve())
-    # Exclude drafts — they use synthetic .drafts/*.draft.json paths and must
-    # not be touched by rename reconciliation.
+    # Exclude drafts AND firings — they use synthetic .drafts/*.draft.json paths
+    # and must not be touched by rename reconciliation. The wrapper owns 'firing'
+    # rows exclusively until its _write_db_row mutates them to status='review'
+    # via the asset_id-keyed path (issue #27).
     cur = conn.execute(
-        "SELECT id, filename, file_path, size_bytes FROM assets WHERE file_path LIKE ? AND status != 'draft'",
+        "SELECT id, filename, file_path, size_bytes FROM assets WHERE file_path LIKE ? AND status NOT IN ('draft','firing')",
         (f"{source_str}%",),
     )
     db_rows = cur.fetchall()
@@ -433,7 +456,7 @@ def scan(
     if not source.exists() or not source.is_dir():
         raise FileNotFoundError(f"source folder not found: {source}")
 
-    counts = {"added": 0, "updated": 0, "unchanged": 0, "skipped": 0, "renamed": 0}
+    counts = {"added": 0, "updated": 0, "unchanged": 0, "skipped": 0, "renamed": 0, "deferred": 0}
     started = time.time()
 
     if dry_run:

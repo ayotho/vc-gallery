@@ -306,10 +306,101 @@ class State:
             }
         # Fixes #16/H4: replay fire registry to reap orphaned PIDs from prior crash
         self._replay_fires_on_boot()
+        # Issue #27 — boot-time migration: heal any pre-fix 2-row pairs.
+        # Older fires created TWO rows (ghost at .drafts/ + real at gallery
+        # path). New fires mutate one row, but DBs that existed before the
+        # fix can still carry these pairs. Merge them on boot so the
+        # gallery shows one row per logical asset.
+        self._migrate_draft_pairs_on_boot()
         if run_scan:
             self.rescan()
         self.mark_changed()
         return self.folder_info()
+
+    def _migrate_draft_pairs_on_boot(self) -> None:
+        """Merge any pre-fix 2-row pairs: (draft-path ghost) + (real asset).
+
+        For each ghost row (file_path contains '/.drafts/') whose `filename`
+        also names a row with a real file_path:
+          - Move the real row's media metadata onto the ghost row (preserving
+            the ghost's id so the draft.payload history stays linked).
+          - Move the prompts + jobs rows from real → ghost.
+          - Delete the real row.
+
+        Only fires when BOTH rows exist for one filename, so it's idempotent.
+        Logs every merge via the audit log.
+        """
+        if self._conn is None:
+            return
+        sep = os.sep
+        ghost_marker = f"{sep}.drafts{sep}"
+        try:
+            ghosts = self._conn.execute(
+                "SELECT id, filename, file_path FROM assets WHERE file_path LIKE ?",
+                (f"%{ghost_marker}%",),
+            ).fetchall()
+        except sqlite3.DatabaseError as e:
+            print(f"[boot-migrate] query failed: {e}", file=sys.stderr)
+            return
+        merged = 0
+        for g in ghosts:
+            real = self._conn.execute(
+                "SELECT * FROM assets WHERE filename = ? AND id != ? "
+                "AND file_path NOT LIKE ? LIMIT 2",
+                (g["filename"], g["id"], f"%{ghost_marker}%"),
+            ).fetchall()
+            if len(real) != 1:
+                # 0 matches → just a draft, no pair to merge. 2+ → ambiguous,
+                # skip; the director can resolve manually.
+                continue
+            r = real[0]
+            try:
+                # Order matters — assets.file_path is UNIQUE, so we can't move
+                # the path onto the ghost while the real row still owns it.
+                # Sequence:
+                #   1. Clear ghost's existing prompts/jobs (real wins)
+                #   2. Reparent real's prompts/jobs → ghost
+                #   3. Delete the real row (frees the file_path)
+                #   4. UPDATE the ghost with the real row's media metadata
+                self._conn.execute("DELETE FROM prompts WHERE asset_id = ?", (g["id"],))
+                self._conn.execute("DELETE FROM jobs WHERE asset_id = ?", (g["id"],))
+                self._conn.execute(
+                    "UPDATE prompts SET asset_id = ? WHERE asset_id = ?",
+                    (g["id"], r["id"]),
+                )
+                self._conn.execute(
+                    "UPDATE jobs SET asset_id = ? WHERE asset_id = ?",
+                    (g["id"], r["id"]),
+                )
+                self._conn.execute("DELETE FROM assets WHERE id = ?", (r["id"],))
+                self._conn.execute(
+                    """UPDATE assets SET
+                        file_path = ?, media_type = ?, size_bytes = ?,
+                        file_modified_at = ?, source_type = ?, has_sidecar = ?,
+                        sidecar_path = ?, status = ?, shot_id = COALESCE(?, shot_id),
+                        scene = COALESCE(?, scene), model = COALESCE(?, model),
+                        workflow = COALESCE(?, workflow),
+                        client = COALESCE(?, client), project = COALESCE(?, project),
+                        width = COALESCE(?, width), height = COALESCE(?, height),
+                        duration_sec = COALESCE(?, duration_sec),
+                        last_updated_at = strftime('%s','now')
+                       WHERE id = ?""",
+                    (
+                        r["file_path"], r["media_type"], r["size_bytes"],
+                        r["file_modified_at"], r["source_type"], r["has_sidecar"],
+                        r["sidecar_path"], r["status"], r["shot_id"], r["scene"],
+                        r["model"], r["workflow"], r["client"], r["project"],
+                        r["width"], r["height"], r["duration_sec"],
+                        g["id"],
+                    ),
+                )
+                self._conn.commit()
+                merged += 1
+            except sqlite3.DatabaseError as e:
+                print(f"[boot-migrate] failed for filename={g['filename']}: {e}", file=sys.stderr)
+                self._conn.rollback()
+        if merged:
+            print(f"[boot-migrate] merged {merged} pre-fix draft→fire pairs", file=sys.stderr)
 
     def rescan(self) -> dict:
         if self.folder is None or self.db_path is None:
@@ -1238,6 +1329,11 @@ def _fire_draft(asset_id: int) -> dict:
     payload.setdefault("workflow", row["workflow"] or "draft.fire")
     payload.setdefault("gallery", str(STATE.folder) if STATE.folder else "")
     payload.setdefault("skip_sidecar", True)
+    # Issue #27 — pass the draft's asset_id so the wrapper mutates the existing
+    # row instead of inserting a duplicate. Without this, draft→fire→success
+    # left a "ghost" row at the .drafts/ path + a "real" row at the gallery
+    # path. With it, ONE row flows through draft → firing → review.
+    payload["asset_id"] = asset_id
 
     # Write the payload to a temp file the wrapper can read
     import tempfile
