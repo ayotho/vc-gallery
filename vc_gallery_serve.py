@@ -124,6 +124,78 @@ class State:
         except OSError:
             pass
 
+    def reap_zombie_firings(self, stuck_seconds: int = 1800) -> int:
+        """Concern #1 from PR #36 self-review — defensive sweep for rows
+        stuck at status='firing' with no live wrapper anywhere.
+
+        Catches the failure modes _replay_fires_on_boot + list_fires miss:
+          - kill -9 on the wrapper (no exit code propagated to the registry)
+          - Server crash between register_fire and the wrapper writing its DB row
+          - Wrapper exits while server is paused/forked, missed by proc.poll
+          - Long-finished entry trimmed from the in-memory registry while the
+            DB row is still at 'firing' (no transition_fire_status callback)
+
+        Default threshold: 30 minutes. Any wrapper exceeding this is dead —
+        Kling/Seedance/NBP all top out around 5 min. Director can refire from
+        the demoted 'draft' state.
+
+        Returns the count reaped. Safe to call repeatedly (idempotent).
+        """
+        if self._conn is None:
+            return 0
+        try:
+            rows = self._conn.execute(
+                "SELECT id, last_updated_at, filename FROM assets WHERE status = 'firing'"
+            ).fetchall()
+        except sqlite3.DatabaseError:
+            return 0
+        if not rows:
+            return 0
+        now = time.time()
+        # Snapshot live asset_ids from the registry — anything in here is
+        # considered "wrapper is still working on it" regardless of stuck time.
+        with self._fires_lock:
+            live_asset_ids: set[int] = set()
+            for info in self._fires.values():
+                proc = info.get("proc")
+                aid = info.get("asset_id")
+                if aid is None:
+                    continue
+                # Process either still running OR proc handle missing (external
+                # fire registered without a Popen handle — see #28). Treat as
+                # live if poll() returns None OR there is no proc handle yet.
+                if proc is None or proc.poll() is None:
+                    live_asset_ids.add(int(aid))
+        reaped = 0
+        for r in rows:
+            asset_id = r["id"]
+            if asset_id in live_asset_ids:
+                continue  # wrapper still running, leave alone
+            stuck_for = now - (r["last_updated_at"] or 0)
+            if stuck_for < stuck_seconds:
+                continue  # young — wait a bit, wrapper may still come back
+            try:
+                cur = self._conn.execute(
+                    "UPDATE assets SET status = 'draft', "
+                    "last_updated_at = strftime('%s','now') "
+                    "WHERE id = ? AND status = 'firing'",
+                    (asset_id,),
+                )
+                self._conn.commit()
+                if cur.rowcount:
+                    reaped += 1
+                    _audit("fire.zombie_reaped", {
+                        "asset_id": asset_id,
+                        "filename": r["filename"],
+                        "stuck_seconds": int(stuck_for),
+                    })
+            except sqlite3.DatabaseError as e:
+                print(f"[zombie-reap] failed for asset {asset_id}: {e}", file=sys.stderr)
+        if reaped:
+            print(f"[zombie-reap] demoted {reaped} stuck firing row(s) → draft", file=sys.stderr)
+            self.mark_changed()
+        return reaped
+
     def _replay_fires_on_boot(self) -> None:
         """On folder set, replay fires.jsonl to find orphaned processes.
         Dead PIDs get their tmp payload files cleaned up and their asset
@@ -306,6 +378,11 @@ class State:
             }
         # Fixes #16/H4: replay fire registry to reap orphaned PIDs from prior crash
         self._replay_fires_on_boot()
+        # Concern #1 (PR #36 self-review) — sweep any rows stuck at 'firing'
+        # with no live wrapper, beyond what _replay_fires can see (kill -9,
+        # registry crash, missed transitions). Idempotent, safe to call
+        # on every boot + folder switch.
+        self.reap_zombie_firings()
         # Issue #27 — boot-time migration: heal any pre-fix 2-row pairs.
         # Older fires created TWO rows (ghost at .drafts/ + real at gallery
         # path). New fires mutate one row, but DBs that existed before the
@@ -355,6 +432,16 @@ class State:
                 continue
             r = real[0]
             try:
+                # Per-pair transaction (concern #2 from PR #36 self-review) —
+                # the merge is 6 statements with the assets.file_path UNIQUE
+                # constraint sandwiched between them. If we crash between the
+                # DELETE real and the UPDATE ghost, we'd leave the DB without
+                # either row owning the file_path AND with both prompts/jobs
+                # reparented to the ghost — partially-applied state. Wrapping
+                # the whole pair in BEGIN/COMMIT means the next boot sees
+                # either (pre-merge: still 2 rows, retry) or (post-merge: 1
+                # row, done). No half-merged middle state.
+                self._conn.execute("BEGIN")
                 # Order matters — assets.file_path is UNIQUE, so we can't move
                 # the path onto the ghost while the real row still owns it.
                 # Sequence:
@@ -488,6 +575,18 @@ class FolderWatcher:
 
         added = current - known
         removed = known - current
+
+        # Concern #1 (PR #36 self-review) — sweep zombie firing rows on each
+        # tick. The query is index-scanned (idx_assets_status) and returns
+        # empty in the common case, so it's effectively free. Catches
+        # in-session zombies the boot sweep would have to wait for a restart
+        # to clear. NOT gated on file changes — zombies can outlive any
+        # filesystem activity.
+        try:
+            self.state.reap_zombie_firings()
+        except Exception as e:  # noqa: BLE001
+            print(f"[watcher] zombie reap failed: {e}", file=sys.stderr)
+
         if not (added or removed):
             return
 
