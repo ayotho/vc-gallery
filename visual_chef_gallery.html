@@ -249,12 +249,27 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 
 /* Multi-select bar — collapses below the canvas head when N≥1 picked.
    Hand-off cue is in the body text so director knows /canvas works. */
+.filter-breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 12px; margin: 0 0 var(--s-sm); font-size: 12px; color: #6f6c64; }
+.filter-breadcrumb[hidden] { display: none; }
+.filter-breadcrumb .fb-label { font-weight: 500; color: var(--ink); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+.filter-breadcrumb .fb-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px 3px 10px; background: var(--surface-soft); border: 1px solid var(--hairline); border-radius: var(--r-pill); font-family: var(--mono); font-size: 11px; color: var(--ink); }
+.filter-breadcrumb .fb-chip .fb-x { cursor: pointer; opacity: 0.5; font-size: 10px; padding: 0 2px; }
+.filter-breadcrumb .fb-chip .fb-x:hover { opacity: 1; }
+.filter-breadcrumb .fb-clear { font-size: 11px; padding: 3px 10px; border-radius: var(--r-pill); background: transparent; color: #6f6c64; cursor: pointer; border: 1px solid transparent; }
+.filter-breadcrumb .fb-clear:hover { color: var(--ink); border-color: var(--hairline); }
 .multi-select-bar { display: flex; align-items: center; gap: 12px; padding: 8px 14px; margin: 0 0 var(--s-md); background: var(--surface-soft); border: 1px solid var(--hairline); border-radius: var(--r-md); font-size: 12.5px; color: var(--ink); }
 .multi-select-bar[hidden] { display: none; }
 .multi-select-bar .ms-ico { color: var(--accent-magenta, #d97757); font-size: 9px; }
 .multi-select-bar .ms-count { font-weight: 540; }
 .multi-select-bar .ms-hint { color: #6f6c64; flex: 1; font-size: 11.5px; }
 .multi-select-bar .ms-hint code { background: var(--canvas); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--ink); font-family: var(--mono); }
+.multi-select-bar .ms-actions { display: flex; gap: 4px; }
+.multi-select-bar .ms-act { font-size: 11.5px; font-weight: 500; padding: 4px 10px; border-radius: var(--r-pill); cursor: pointer; border: 1px solid var(--hairline); background: var(--canvas); color: var(--ink); }
+.multi-select-bar .ms-act:hover { border-color: var(--ink); }
+.multi-select-bar .ms-act.accept { background: var(--block-mint); border-color: transparent; }
+.multi-select-bar .ms-act.hero { background: var(--block-lime); border-color: transparent; }
+.multi-select-bar .ms-act.revise { background: var(--block-cream); border-color: transparent; }
+.multi-select-bar .ms-act.reject { background: var(--block-coral); border-color: transparent; }
 .multi-select-bar .ms-clear { font-size: 12px; padding: 5px 12px; border-radius: var(--r-pill); background: var(--ink); color: var(--on-primary); cursor: pointer; }
 .multi-select-bar .ms-clear:hover { opacity: 0.92; }
 
@@ -900,12 +915,20 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
         </div>
       </div>
 
+      <div class="filter-breadcrumb" id="filter-breadcrumb" hidden></div>
+
       <!-- Multi-select bar — visible only when 1+ assets are Cmd/Shift-selected.
-           Hand-off to Claude via `/canvas` reads /api/selection (already in sync). -->
+           Hand-off to Claude via `/select` reads /api/selection (already in sync). -->
       <div class="multi-select-bar" id="multi-select-bar" hidden>
         <span class="ms-ico" aria-hidden="true">●</span>
         <span class="ms-count">0 selected</span>
-        <span class="ms-hint">Cmd-click to add · Shift-click for range · Esc to clear · Claude can <code>/canvas</code></span>
+        <span class="ms-actions">
+          <button class="ms-act accept" data-status="accepted">✓ Accept</button>
+          <button class="ms-act hero" data-status="hero">★ Hero</button>
+          <button class="ms-act revise" data-status="revise">↻ Revise</button>
+          <button class="ms-act reject" data-status="rejected">✕ Reject</button>
+        </span>
+        <span class="ms-hint">Cmd-click to add · Shift-click for range</span>
         <button class="ms-clear" id="ms-clear">Clear</button>
       </div>
 
@@ -1380,6 +1403,21 @@ function renderCanvasHead() {
   $('#counter-total').textContent = state.totalAssets.toLocaleString();
 }
 
+function renderFilterBreadcrumb() {
+  const el = $('#filter-breadcrumb');
+  if (!el) return;
+  const f = state.filters;
+  const LABELS = { status: 'Status', source_type: 'Source', model: 'Model', workflow: 'Workflow', scene: 'Scene', shot_id: 'Shot', media_type: 'Media' };
+  const active = Object.entries(f).filter(([, v]) => v && typeof v === 'string' && v.length > 0);
+  if (active.length === 0) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = '<span class="fb-label">Filtered by</span>' +
+    active.map(([k, v]) =>
+      `<span class="fb-chip">${LABELS[k] || k}: ${escapeHtml(v)} <span class="fb-x" data-filter="${k}">✕</span></span>`
+    ).join('') +
+    (active.length > 1 ? '<button class="fb-clear" id="fb-clear-all">Clear all</button>' : '');
+}
+
 // -------- Selection bridge --------------------------------------------
 // Mirrors the dashboard's current pick to the server so peer Claude
 // sessions can see what the director is looking at via /api/selection.
@@ -1654,6 +1692,7 @@ async function fillDrawer(id) {
         ${asset.has_sidecar ? '<button id="btn-open-sidecar">📄 Sidecar</button>' : ''}
         ${asset.prompt ? '<button id="btn-copy-prompt">⎘ Copy prompt</button>' : ''}
         ${asset.file_path ? `<button id="btn-copy-path">⎘ Copy path</button>` : ''}
+        ${!isDraft ? `<button id="btn-dupe-draft">⊕ Variant draft</button>` : ''}
       </div>
     </div>
   `;
@@ -1765,6 +1804,39 @@ async function fillDrawer(id) {
     });
   }
 
+  // Duplicate as variant draft
+  const dupeBtn = $('#btn-dupe-draft');
+  if (dupeBtn) {
+    dupeBtn.addEventListener('click', async () => {
+      try {
+        const stem = asset.filename.replace(/\.[^.]+$/, '');
+        const ext = asset.filename.includes('.') ? '.' + asset.filename.split('.').pop() : '.mp4';
+        const newName = `${stem}_variant${ext}`;
+        const draftPayload = {
+          filename: newName,
+          shot_id: asset.shot_id || '',
+          scene: asset.scene || '',
+          model: asset.model || '',
+          workflow: asset.workflow || '',
+          payload: {
+            model: asset.model || '',
+            prompt: asset.prompt || '',
+            image: asset.file_path ? [asset.file_path] : [],
+          },
+        };
+        const res = await api('/api/draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(draftPayload),
+        });
+        flashToast(`Draft created: #${res.asset.id}`, 'ok');
+        refresh();
+      } catch (e) {
+        flashToast('Duplicate failed: ' + e.message, 'error');
+      }
+    });
+  }
+
   // Ref-thumb click — open the full ref in a new tab
   body.querySelectorAll('.ref-thumb').forEach(el => {
     el.addEventListener('click', () => {
@@ -1826,10 +1898,14 @@ function metaRow(k, v, mono) {
 }
 
 function metaRowEditable(k, value, field) {
-  // Inline-editable meta row. Click the value to edit; blur or Enter saves via PATCH.
+  // Inline-editable meta row with datalist suggestions from facets.
+  // Typing shows existing values as autocomplete; free text still allowed.
   const safeVal = escapeHtml(String(value || ''));
   const placeholder = value ? '' : '—';
-  return `<div class="meta-row meta-row-editable" data-field="${escapeHtml(field)}"><span class="k">${escapeHtml(String(k))}</span><input class="v mono meta-edit-input" value="${safeVal}" placeholder="${placeholder}" data-field="${escapeHtml(field)}" /></div>`;
+  const listId = `dl-${field}`;
+  const facetMap = state.facets[field] || {};
+  const options = Object.keys(facetMap).sort().map(v => `<option value="${escapeHtml(v)}">`).join('');
+  return `<div class="meta-row meta-row-editable" data-field="${escapeHtml(field)}"><span class="k">${escapeHtml(String(k))}</span><input class="v mono meta-edit-input" value="${safeVal}" placeholder="${placeholder}" data-field="${escapeHtml(field)}" list="${listId}" /><datalist id="${listId}">${options}</datalist></div>`;
 }
 
 function metaRowLink(k, url, label, mono) {
@@ -1929,7 +2005,7 @@ async function refresh() {
   state.loading = false;  // force-clear any stale lock from a prior in-flight load
   await loadMore(false, myVersion);
   if (myVersion !== _refreshVersion) return;  // a newer refresh raced past us
-  renderCanvasHead();
+  renderCanvasHead(); renderFilterBreadcrumb();
   renderStatusFilters();
   renderSourceFilters();
   // If the previously selected asset isn't in the new result set, close
@@ -1959,7 +2035,7 @@ async function loadMore(append = true, version = null) {
     state.offset += r.items.length;
     if (state.items.length >= r.total || r.items.length < state.limit) state.doneLoading = true;
     renderGrid(append);
-    renderCanvasHead();
+    renderCanvasHead(); renderFilterBreadcrumb();
   } catch (e) {
     flashToast('Load failed: ' + e.message, 'error');
   } finally {
@@ -2007,7 +2083,7 @@ async function pollForChanges() {
     if (atTop) {
       await refresh();
     } else {
-      renderCanvasHead();
+      renderCanvasHead(); renderFilterBreadcrumb();
     }
     const delta = info.asset_count - previousTotal;
     if (delta > 0) flashToast(`+${delta} new ${delta === 1 ? 'asset' : 'assets'}`);
@@ -2693,6 +2769,42 @@ function navigateLightbox(delta) {
   // Multi-select bar's clear button
   const msClear = $('#ms-clear');
   if (msClear) msClear.addEventListener('click', clearMultiSelection);
+  // Filter breadcrumb — click ✕ to clear one filter, or "Clear all" for all
+  $('#filter-breadcrumb').addEventListener('click', (e) => {
+    const x = e.target.closest('.fb-x');
+    if (x) {
+      const key = x.dataset.filter;
+      if (key && state.filters.hasOwnProperty(key)) {
+        state.filters[key] = '';
+        refresh();
+      }
+      return;
+    }
+    if (e.target.id === 'fb-clear-all') {
+      Object.keys(state.filters).forEach(k => state.filters[k] = '');
+      refresh();
+    }
+  });
+  // Bulk status actions on multi-select bar
+  $$('#multi-select-bar .ms-act').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const status = btn.dataset.status;
+      const ids = Array.from(state.multiSelection);
+      if (!ids.length) return;
+      try {
+        const res = await api('/api/assets/bulk-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ asset_ids: ids, status }),
+        });
+        flashToast(`${res.changed} asset${res.changed !== 1 ? 's' : ''} → ${status}`, 'ok');
+        clearMultiSelection();
+        refresh();
+      } catch (e) {
+        flashToast('Bulk action failed: ' + e.message, 'error');
+      }
+    });
+  });
   await refresh();
 
   // Live auto-refresh: chain polls via setTimeout so a slow poll can't stack

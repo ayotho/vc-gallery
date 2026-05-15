@@ -470,6 +470,7 @@ class State:
                         client = COALESCE(?, client), project = COALESCE(?, project),
                         width = COALESCE(?, width), height = COALESCE(?, height),
                         duration_sec = COALESCE(?, duration_sec),
+                        thumb_path = NULL,
                         last_updated_at = strftime('%s','now')
                        WHERE id = ?""",
                     (
@@ -500,7 +501,27 @@ class State:
         counts = scan_mod.scan(self.folder, self.db_path, quiet=True)
         with self._lock:
             self._conn = lib.connect(self.db_path)
+        # Backfill shot_ids from filenames for any rows still missing them
+        backfilled = self._backfill_shot_ids()
+        if backfilled:
+            counts["shot_ids_backfilled"] = backfilled
         return counts
+
+    def _backfill_shot_ids(self) -> int:
+        """Fill in shot_id from filename regex for rows that have NULL shot_id."""
+        conn = self.conn()
+        rows = conn.execute(
+            "SELECT id, filename FROM assets WHERE shot_id IS NULL OR shot_id = ''"
+        ).fetchall()
+        updated = 0
+        for r in rows:
+            shot = scan_mod.extract_shot_id(r["filename"])
+            if shot:
+                conn.execute("UPDATE assets SET shot_id = ? WHERE id = ?", (shot, r["id"]))
+                updated += 1
+        if updated:
+            conn.commit()
+        return updated
 
     def asset_count(self) -> int:
         if self._conn is None:
@@ -1065,6 +1086,45 @@ def _add_review(asset_id: int, payload: dict) -> Optional[dict]:
     return _get_asset(asset_id)
 
 
+def _bulk_status_change(payload: dict) -> dict:
+    """Change status on multiple assets in one call.
+    Body: {asset_ids: [1,2,3], status: "hero", note: "...", reviewer: "director"}
+    """
+    ids = payload.get("asset_ids", [])
+    if not isinstance(ids, list) or not ids:
+        return {"ok": False, "error": "asset_ids must be a non-empty list"}
+    to_status = lib.normalize_status(payload.get("status", ""))
+    if to_status not in lib.VALID_STATUSES:
+        return {"ok": False, "error": f"invalid status: {payload.get('status')}"}
+    note = payload.get("note", "")
+    reviewer = payload.get("reviewer", "director")
+    conn = STATE.conn()
+    changed = []
+    skipped = []
+    for aid in ids:
+        row = conn.execute("SELECT status FROM assets WHERE id = ?", (aid,)).fetchone()
+        if row is None:
+            skipped.append(aid)
+            continue
+        if row["status"] == to_status:
+            skipped.append(aid)
+            continue
+        conn.execute(
+            "INSERT INTO reviews (asset_id, from_status, to_status, note, reviewer) VALUES (?, ?, ?, ?, ?)",
+            (aid, row["status"], to_status, note, reviewer),
+        )
+        conn.execute(
+            "UPDATE assets SET status = ?, last_updated_at = strftime('%s','now') WHERE id = ?",
+            (to_status, aid),
+        )
+        changed.append(aid)
+    if changed:
+        conn.commit()
+        _audit("bulk.status_change", {"to_status": to_status, "changed": changed, "skipped": skipped})
+        STATE.mark_changed()
+    return {"ok": True, "changed": len(changed), "skipped": len(skipped), "changed_ids": changed}
+
+
 def _open_in_finder(asset_id: int) -> tuple[bool, str]:
     """Return (ok, reason). Reason is empty on success, human-readable on failure.
     Previously returned a bool that was 'true' whenever subprocess.Popen
@@ -1218,7 +1278,7 @@ def _rename_asset(payload: dict) -> dict:
     try:
         conn.execute("BEGIN")
         conn.execute(
-            "UPDATE assets SET filename = ?, file_path = ?, last_updated_at = strftime('%s','now') WHERE id = ?",
+            "UPDATE assets SET filename = ?, file_path = ?, thumb_path = NULL, last_updated_at = strftime('%s','now') WHERE id = ?",
             (new_filename, str(new_path), row["id"]),
         )
         conn.execute("COMMIT")
@@ -1424,6 +1484,58 @@ def _delete_draft(asset_id: int) -> dict:
     conn.commit()
     _audit("draft.deleted", {"asset_id": asset_id, "filename": row["filename"]})
     return {"ok": True}
+
+
+def _delete_asset(asset_id: int) -> dict:
+    """Hard-delete a single asset row, its prompts/jobs, and its cached thumb."""
+    conn = STATE.conn()
+    row = conn.execute("SELECT id, filename, file_path, thumb_path, status FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    if row is None:
+        return {"ok": False, "error": "asset not found"}
+    # Clean up thumb cache file
+    if row["thumb_path"] and STATE.folder:
+        thumb_file = STATE.folder / ".visual_chef" / ".thumb_cache" / row["thumb_path"]
+        if thumb_file.exists():
+            try:
+                thumb_file.unlink()
+            except OSError:
+                pass
+    conn.execute("DELETE FROM prompts WHERE asset_id = ?", (asset_id,))
+    conn.execute("DELETE FROM jobs WHERE asset_id = ?", (asset_id,))
+    conn.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
+    conn.commit()
+    _audit("asset.deleted", {"asset_id": asset_id, "filename": row["filename"], "status": row["status"]})
+    STATE.mark_changed()
+    return {"ok": True, "deleted_id": asset_id, "filename": row["filename"]}
+
+
+def _purge_orphans() -> dict:
+    """Delete all asset rows whose file no longer exists on disk."""
+    conn = STATE.conn()
+    rows = conn.execute("SELECT id, filename, file_path, thumb_path FROM assets").fetchall()
+    purged = []
+    for r in rows:
+        if r["file_path"] and not Path(r["file_path"]).exists():
+            # Skip drafts/firing (their file_path points to .drafts/ staging area)
+            status = conn.execute("SELECT status FROM assets WHERE id = ?", (r["id"],)).fetchone()
+            if status and status["status"] in ("draft", "firing"):
+                continue
+            if r["thumb_path"] and STATE.folder:
+                thumb_file = STATE.folder / ".visual_chef" / ".thumb_cache" / r["thumb_path"]
+                if thumb_file.exists():
+                    try:
+                        thumb_file.unlink()
+                    except OSError:
+                        pass
+            conn.execute("DELETE FROM prompts WHERE asset_id = ?", (r["id"],))
+            conn.execute("DELETE FROM jobs WHERE asset_id = ?", (r["id"],))
+            conn.execute("DELETE FROM assets WHERE id = ?", (r["id"],))
+            purged.append({"id": r["id"], "filename": r["filename"]})
+    if purged:
+        conn.commit()
+        _audit("orphans.purged", {"count": len(purged), "ids": [p["id"] for p in purged]})
+        STATE.mark_changed()
+    return {"ok": True, "purged": len(purged), "items": purged}
 
 
 def _transition_fire_status(asset_id: int | None, exit_code: int) -> None:
@@ -2013,6 +2125,26 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(status, result)
             return
 
+        # POST /api/assets/bulk-status — change status on multiple assets at once
+        if path == "/api/assets/bulk-status":
+            if STATE.folder is None:
+                self._send_error_json(409, "no working folder set")
+                return
+            payload = self._read_json_body()
+            result = _bulk_status_change(payload)
+            status = 200 if result.get("ok") else 400
+            self._send_json(status, result)
+            return
+
+        # POST /api/debug/orphans/purge — delete all rows whose file is gone
+        if path == "/api/debug/orphans/purge":
+            if STATE.folder is None:
+                self._send_error_json(409, "no working folder set")
+                return
+            result = _purge_orphans()
+            self._send_json(200, result)
+            return
+
         self._send_error_json(404, f"no route: {path}")
 
     def do_PUT(self) -> None:  # noqa: N802
@@ -2045,6 +2177,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/selection":
             sel = STATE.clear_selection()
             self._send_json(200, {"ok": True, "count": 0, "set_by": sel["set_by"]})
+            return
+        # DELETE /api/assets/<id> — hard-delete a single asset row + its thumb
+        m2 = re.match(r"^/api/assets/(\d+)$", path)
+        if m2:
+            if STATE.folder is None:
+                self._send_error_json(409, "no working folder set")
+                return
+            result = _delete_asset(int(m2.group(1)))
+            status = 200 if result.get("ok") else (404 if "not found" in result.get("error", "") else 400)
+            self._send_json(status, result)
             return
         self._send_error_json(404, f"no route: {path}")
 

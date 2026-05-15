@@ -57,6 +57,21 @@ ASSET_COLUMNS = [
     "width", "height", "duration_sec",
 ]
 
+import re as _re
+
+# Regex for extracting shot_id from filenames.
+# Matches patterns like SH450, SH1740A, sh120b at the start of the filename
+# (before the first underscore or other separator).
+# Case-insensitive. Captures the full shot token including optional letter suffix.
+_SHOT_ID_RE = _re.compile(r'\b(SH\d+[A-Z]?)\b', _re.IGNORECASE)
+
+
+def extract_shot_id(filename: str) -> str | None:
+    """Extract a shot_id like 'SH450' or 'SH1740A' from a filename.
+    Returns the uppercased shot_id or None if no match."""
+    m = _SHOT_ID_RE.search(filename)
+    return m.group(1).upper() if m else None
+
 
 def probe_media_dimensions(media_path) -> dict:
     """Run ffprobe and return {width, height, duration_sec}.
@@ -177,7 +192,7 @@ def _row_for(media: Path, sidecar: Path | None) -> tuple[dict, dict | None]:
         "has_sidecar": 1 if has_sidecar else 0,
         "sidecar_path": str(sidecar.resolve()) if sidecar else None,
         "status": sidecar_data.get("status", "review"),
-        "shot_id": sidecar_data.get("shot_id") or None,
+        "shot_id": sidecar_data.get("shot_id") or extract_shot_id(media.name),
         "scene": sidecar_data.get("scene") or None,
         "model": sidecar_data.get("model") or None,
         "workflow": sidecar_data.get("workflow") or None,
@@ -289,7 +304,7 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
             conn.execute(
                 """UPDATE assets
                    SET file_path = ?, filename = ?, sidecar_path = ?, has_sidecar = ?,
-                       size_bytes = ?, file_modified_at = ?,
+                       size_bytes = ?, file_modified_at = ?, thumb_path = NULL,
                        last_updated_at = strftime('%s','now')
                    WHERE id = ?""",
                 (row["file_path"], row["filename"], row["sidecar_path"],
@@ -484,7 +499,7 @@ def _reconcile_renames(conn, source: Path, log_target: Path) -> int:
             continue
         # Apply the rename
         conn.execute(
-            "UPDATE assets SET file_path = ?, last_updated_at = strftime('%s','now') WHERE id = ?",
+            "UPDATE assets SET file_path = ?, thumb_path = NULL, last_updated_at = strftime('%s','now') WHERE id = ?",
             (str(new_path.resolve()), missing["id"]),
         )
         renames += 1
