@@ -541,17 +541,23 @@ def _list_assets(params: dict) -> dict:
     #     null shot_id polluted the top — VC-C found 269/269 videos this way).
     #   - sort=status tiebreaks by recent so within a status block the newest
     #     surfaces first (VC-C: was just alphabetical).
+    # Patch 2026-05-15:
+    #   - "recent" now sorts by first_seen_at (when scanner first indexed the
+    #     asset) instead of file_modified_at (filesystem mtime). mtime lies
+    #     on copies — cp/rsync/Drive-sync preserve the source mtime, so a
+    #     brand-new draft can have an mtime from a week ago and never land
+    #     at top. first_seen_at is set server-side at insert and never lies.
     order = {
-        "recent": "a.file_modified_at DESC",
-        "oldest": "a.file_modified_at ASC",
+        "recent": "a.first_seen_at DESC",
+        "oldest": "a.first_seen_at ASC",
         "name": "a.filename ASC",
         "name-desc": "a.filename DESC",
-        "status": "a.status, a.file_modified_at DESC, a.filename",
+        "status": "a.status, a.first_seen_at DESC, a.filename",
         "shot": "a.shot_id IS NULL, a.shot_id = '', a.shot_id, a.filename",
-        "model": "a.model IS NULL, a.model, a.file_modified_at DESC",
+        "model": "a.model IS NULL, a.model, a.first_seen_at DESC",
         "id": "a.id ASC",
         "id-desc": "a.id DESC",
-    }.get(sort, "a.file_modified_at DESC")
+    }.get(sort, "a.first_seen_at DESC")
 
     rows = conn.execute(
         f"SELECT a.* {base_sql} ORDER BY {order} LIMIT ? OFFSET ?",
