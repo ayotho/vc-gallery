@@ -29,6 +29,7 @@ py-modules = [
     "vc_gallery_test",
     "vc_gallery_backfill_hf_links",
     "hf_gen_with_sidecar",
+    "hf_envelope_parse",
     "jsonl_append",
     "write_media_sidecar",
     "write_companion_note",
