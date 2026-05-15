@@ -468,7 +468,13 @@ def _extract_refs(refs) -> list[str]:
 # and by the file watcher to add a single new file mid-session.
 # ---------------------------------------------------------------------------
 
-def upsert_asset_direct(conn: sqlite3.Connection, file_path: str | Path, metadata: dict) -> tuple[int, str]:
+def upsert_asset_direct(
+    conn: sqlite3.Connection,
+    file_path: str | Path,
+    metadata: dict,
+    *,
+    asset_id: int | None = None,
+) -> tuple[int, str]:
     """Insert or update one asset row from a metadata dict.
 
     metadata keys (all optional unless noted):
@@ -477,7 +483,22 @@ def upsert_asset_direct(conn: sqlite3.Connection, file_path: str | Path, metadat
       prompt_text, refs, hf_job_id, hf_job_url, has_sidecar, sidecar_path, notes.
 
     Handles assets + prompts + jobs in one transaction. Returns
-    (asset_id, 'added' | 'updated').
+    (asset_id, 'added' | 'updated' | 'mutated').
+
+    `asset_id` kwarg (issue #27 — draft→fire single row):
+      When given, UPDATE the row with that id IN PLACE — flip its file_path
+      to the new location, set status, write metadata, no matter what the
+      old file_path was. Used by the wrapper to mutate a draft row into a
+      review row instead of inserting a duplicate. Returns ('mutated').
+
+      The caller is responsible for passing a valid asset_id; if no row
+      exists with that id we fall through to the path-keyed code path and
+      a fresh INSERT (best-effort fallback so a stale asset_id from a
+      backward-compat scenario doesn't break the fire).
+
+      If another row in the DB already points at the new file_path (the
+      scanner-race case), that ghost row is DELETED before the UPDATE so
+      we never violate the file_path uniqueness constraint.
     """
     import json as _json
 
@@ -523,28 +544,58 @@ def upsert_asset_direct(conn: sqlite3.Connection, file_path: str | Path, metadat
         "notes": metadata.get("notes") or "",
     }
 
-    existing = conn.execute(
-        "SELECT id FROM assets WHERE file_path = ?", (row["file_path"],)
-    ).fetchone()
+    # Issue #27 — asset_id-keyed mutate path for draft→fire. Server passes the
+    # draft's asset_id; we flip it in place to the real file_path + review
+    # status. Preserves the draft's id (history continuity) and avoids the
+    # 2-row split.
+    if asset_id is not None:
+        existing_by_id = conn.execute(
+            "SELECT id FROM assets WHERE id = ?", (asset_id,)
+        ).fetchone()
+        if existing_by_id is not None:
+            # If another row owns the target file_path (scanner race or stale
+            # ghost from a prior fire), drop it BEFORE the UPDATE so the
+            # uniqueness constraint stays clean. The wrapper's row is the truth.
+            conn.execute(
+                "DELETE FROM assets WHERE file_path = ? AND id != ?",
+                (row["file_path"], asset_id),
+            )
+            cols = list(row.keys())
+            set_clause = ", ".join(f"{c} = ?" for c in cols)
+            conn.execute(
+                f"UPDATE assets SET {set_clause}, last_updated_at = strftime('%s','now') WHERE id = ?",
+                [row[c] for c in cols] + [asset_id],
+            )
+            action = "mutated"
+            # Fall through to prompt/jobs upsert below
+        else:
+            # Stale asset_id (the draft was deleted while the wrapper was
+            # running?). Fall back to path-keyed behavior.
+            asset_id = None
 
-    if existing is None:
-        cols = list(row.keys())
-        placeholders = ", ".join("?" for _ in cols)
-        cur = conn.execute(
-            f"INSERT INTO assets ({', '.join(cols)}) VALUES ({placeholders})",
-            [row[c] for c in cols],
-        )
-        asset_id = cur.lastrowid
-        action = "added"
-    else:
-        asset_id = existing["id"]
-        cols = list(row.keys())
-        set_clause = ", ".join(f"{c} = ?" for c in cols)
-        conn.execute(
-            f"UPDATE assets SET {set_clause}, last_updated_at = strftime('%s','now') WHERE id = ?",
-            [row[c] for c in cols] + [asset_id],
-        )
-        action = "updated"
+    if asset_id is None:
+        existing = conn.execute(
+            "SELECT id FROM assets WHERE file_path = ?", (row["file_path"],)
+        ).fetchone()
+
+        if existing is None:
+            cols = list(row.keys())
+            placeholders = ", ".join("?" for _ in cols)
+            cur = conn.execute(
+                f"INSERT INTO assets ({', '.join(cols)}) VALUES ({placeholders})",
+                [row[c] for c in cols],
+            )
+            asset_id = cur.lastrowid
+            action = "added"
+        else:
+            asset_id = existing["id"]
+            cols = list(row.keys())
+            set_clause = ", ".join(f"{c} = ?" for c in cols)
+            conn.execute(
+                f"UPDATE assets SET {set_clause}, last_updated_at = strftime('%s','now') WHERE id = ?",
+                [row[c] for c in cols] + [asset_id],
+            )
+            action = "updated"
 
     prompt_text = metadata.get("prompt_text") or ""
     refs = metadata.get("refs") or []

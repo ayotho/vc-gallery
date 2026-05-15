@@ -275,24 +275,17 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
     """
     existing = _existing_fingerprint(conn, row["file_path"])
     if existing is None:
-        # Issue #33 — before inserting, check if this is a renamed version of
-        # a row we already have. POSIX `os.rename` preserves size+mtime, so a
-        # ghost row with the same fingerprint AND a stale file_path is
-        # almost certainly the same logical asset that just got renamed.
-        # Reconciling it preserves status/scene/sidecar metadata instead of
-        # creating a duplicate row and a unique-constraint collision on the
-        # next /api/rename.
         gallery_dir = str(Path(row["file_path"]).parent)
+
+        # Issue #33 — check if this is a renamed version of a row we already
+        # have. POSIX rename preserves size+mtime, so a ghost row with the
+        # same fingerprint AND a stale file_path is almost certainly the same
+        # logical asset renamed on disk. Reconciling preserves status/scene/
+        # sidecar metadata instead of creating a duplicate.
         ghost_id = _find_renamed_ghost(
             conn, gallery_dir, row["size_bytes"], row["file_modified_at"]
         )
         if ghost_id is not None:
-            # SURGICAL update — only touch the columns that describe the
-            # file's location on disk. Preserves the ghost row's business
-            # metadata (status, scene, shot_id, model, workflow, client,
-            # project, etc) so a rename doesn't wipe what the director set.
-            # If the renamed file has a fresh sidecar with new metadata, a
-            # follow-on scan will detect that via the normal "updated" path.
             conn.execute(
                 """UPDATE assets
                    SET file_path = ?, filename = ?, sidecar_path = ?, has_sidecar = ?,
@@ -305,6 +298,19 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
             )
             _upsert_job(conn, ghost_id, row)
             return ghost_id, "renamed"
+
+        # Issue #27 (scanner debounce) — if a draft/firing row with the same
+        # filename already exists in this gallery, the wrapper owns this
+        # file's eventual row. Skip insert so the wrapper's UPDATE brings
+        # the draft row to status=review without creating a ghost duplicate.
+        owning_draft = conn.execute(
+            "SELECT id FROM assets "
+            "WHERE filename = ? AND status IN ('draft','firing') "
+            "AND file_path LIKE ?",
+            (row["filename"], gallery_dir.rstrip(os.sep) + os.sep + "%"),
+        ).fetchone()
+        if owning_draft is not None:
+            return owning_draft["id"], "deferred"
 
         # New file → probe dimensions before insert.
         dims = probe_media_dimensions(row["file_path"])
@@ -432,10 +438,12 @@ def _reconcile_renames(conn, source: Path, log_target: Path) -> int:
     """
     renames = 0
     source_str = str(source.resolve())
-    # Exclude drafts — they use synthetic .drafts/*.draft.json paths and must
-    # not be touched by rename reconciliation.
+    # Exclude drafts AND firings — they use synthetic .drafts/*.draft.json paths
+    # and must not be touched by rename reconciliation. The wrapper owns 'firing'
+    # rows exclusively until its _write_db_row mutates them to status='review'
+    # via the asset_id-keyed path (issue #27).
     cur = conn.execute(
-        "SELECT id, filename, file_path, size_bytes FROM assets WHERE file_path LIKE ? AND status != 'draft'",
+        "SELECT id, filename, file_path, size_bytes FROM assets WHERE file_path LIKE ? AND status NOT IN ('draft','firing')",
         (f"{source_str}%",),
     )
     db_rows = cur.fetchall()
@@ -503,7 +511,7 @@ def scan(
     if not source.exists() or not source.is_dir():
         raise FileNotFoundError(f"source folder not found: {source}")
 
-    counts = {"added": 0, "updated": 0, "unchanged": 0, "skipped": 0, "renamed": 0}
+    counts = {"added": 0, "updated": 0, "unchanged": 0, "skipped": 0, "renamed": 0, "deferred": 0}
     started = time.time()
 
     if dry_run:
