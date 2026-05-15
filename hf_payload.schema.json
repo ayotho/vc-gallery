@@ -265,6 +265,12 @@
       "maxLength": 32,
       "description": "Shot identifier. Canonical form is SH<digits>[A-Za-z]{0,4} (e.g. SH1430, SH050C, SH040ABC). Also accepts free-text identifiers for drafts/experiments (e.g. TEST, RND_dreamscape, cref_a) or empty string. Pattern relaxed 2026-05-15 to support exploratory work."
     },
+    "scene": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]*$",
+      "maxLength": 64,
+      "description": "Scene slug from episode.yaml (e.g. emerald_dmt, sandman_intro). Paired with shot_id at fire time for automatic canvas DB tagging — avoids manual PATCH sweeps post-fire. Added 2026-05-15 to support auto-tag rule."
+    },
     "session": {
       "type": "string",
       "description": "Session UUID \u2014 wrapper auto-detects if omitted"

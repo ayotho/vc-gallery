@@ -351,6 +351,7 @@ def _write_db_row(payload: dict, target: Path, prompt: str, refs: list[str], job
             "client": payload.get("client", ""),
             "project": payload.get("project", ""),
             "shot_id": payload.get("shot_id", ""),
+            "scene": payload.get("scene", ""),
             "parent_filename": payload.get("parent", ""),
             "session": payload.get("session", ""),
             "session_date": payload.get("session_date", ""),
