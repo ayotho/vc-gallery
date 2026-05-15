@@ -1,0 +1,82 @@
+[
+  {
+    "display_name": "Cinematic Studio 3.0",
+    "job_set_type": "cinematic_studio_3_0",
+    "type": "video"
+  },
+  {
+    "display_name": "Cinematic Studio Video",
+    "job_set_type": "cinematic_studio_video",
+    "type": "video"
+  },
+  {
+    "display_name": "Cinematic Studio Video V2",
+    "job_set_type": "cinematic_studio_video_v2",
+    "type": "video"
+  },
+  {
+    "display_name": "Google Veo 3",
+    "job_set_type": "veo3",
+    "type": "video"
+  },
+  {
+    "display_name": "Google Veo 3.1",
+    "job_set_type": "veo3_1",
+    "type": "video"
+  },
+  {
+    "display_name": "Google Veo 3.1 Lite",
+    "job_set_type": "veo3_1_lite",
+    "type": "video"
+  },
+  {
+    "display_name": "Grok Video",
+    "job_set_type": "grok_video",
+    "type": "video"
+  },
+  {
+    "display_name": "Kling 2.6 Video",
+    "job_set_type": "kling2_6",
+    "type": "video"
+  },
+  {
+    "display_name": "Kling v3.0",
+    "job_set_type": "kling3_0",
+    "type": "video"
+  },
+  {
+    "display_name": "Marketing Studio Video",
+    "job_set_type": "marketing_studio_video",
+    "type": "video"
+  },
+  {
+    "display_name": "Minimax Hailuo",
+    "job_set_type": "minimax_hailuo",
+    "type": "video"
+  },
+  {
+    "display_name": "Seedance 1.5 Pro",
+    "job_set_type": "seedance1_5",
+    "type": "video"
+  },
+  {
+    "display_name": "Seedance 2.0",
+    "job_set_type": "seedance_2_0",
+    "type": "video"
+  },
+  {
+    "display_name": "Soul Cast",
+    "job_set_type": "soul_cast",
+    "type": "video"
+  },
+  {
+    "display_name": "Wan 2.6 Video",
+    "job_set_type": "wan2_6",
+    "type": "video"
+  },
+  {
+    "display_name": "Wan 2.7",
+    "job_set_type": "wan2_7",
+    "type": "video"
+  }
+]

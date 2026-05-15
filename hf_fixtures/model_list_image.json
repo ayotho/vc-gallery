@@ -1,0 +1,97 @@
+[
+  {
+    "display_name": "Cinematic Studio 2.5",
+    "job_set_type": "cinematic_studio_2_5",
+    "type": "image"
+  },
+  {
+    "display_name": "FLUX.2",
+    "job_set_type": "flux_2",
+    "type": "image"
+  },
+  {
+    "display_name": "Flux Kontext",
+    "job_set_type": "flux_kontext",
+    "type": "image"
+  },
+  {
+    "display_name": "GPT Image 2",
+    "job_set_type": "imagegen_2_0",
+    "type": "image"
+  },
+  {
+    "display_name": "GPT Image 2",
+    "job_set_type": "gpt_image_2",
+    "type": "image"
+  },
+  {
+    "display_name": "Grok Image",
+    "job_set_type": "grok_image",
+    "type": "image"
+  },
+  {
+    "display_name": "Higgsfield Soul V2",
+    "job_set_type": "text2image_soul_v2",
+    "type": "image"
+  },
+  {
+    "display_name": "Image Auto",
+    "job_set_type": "image_auto",
+    "type": "image"
+  },
+  {
+    "display_name": "Kling O1 Image",
+    "job_set_type": "kling_omni_image",
+    "type": "image"
+  },
+  {
+    "display_name": "Marketing Studio Image",
+    "job_set_type": "marketing_studio_image",
+    "type": "image"
+  },
+  {
+    "display_name": "Nano Banana",
+    "job_set_type": "nano_banana",
+    "type": "image"
+  },
+  {
+    "display_name": "Nano Banana 2",
+    "job_set_type": "nano_banana_flash",
+    "type": "image"
+  },
+  {
+    "display_name": "Nano Banana Pro",
+    "job_set_type": "nano_banana_2",
+    "type": "image"
+  },
+  {
+    "display_name": "OpenAI Hazel",
+    "job_set_type": "openai_hazel",
+    "type": "image"
+  },
+  {
+    "display_name": "Seedream 4.5",
+    "job_set_type": "seedream_v4_5",
+    "type": "image"
+  },
+  {
+    "display_name": "Seedream V5 Lite",
+    "job_set_type": "seedream_v5_lite",
+    "type": "image"
+  },
+  {
+    "display_name": "Soul Cinematic",
+    "job_set_type": "soul_cinematic",
+    "type": "image"
+  },
+  {
+    "display_name": "Soul Location",
+    "job_set_type": "soul_location",
+    "type": "image"
+  },
+  {
+    "display_name": "Z Image",
+    "job_set_type": "z_image",
+    "type": "image"
+  }
+]
