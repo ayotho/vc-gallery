@@ -236,6 +236,33 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .thumb { position: relative; display: block; }
 .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .thumb .frame { position: absolute; inset: 0; background-size: cover; background-position: center; background-color: #1a1a1d; }
+/* Issue #26 — draft thumbnails show a text-preview of the prompt instead of a
+   black tile. Subtle off-canvas background so the eye registers "this is a draft
+   preview" rather than "this is broken media". Status-gated — only renders for
+   asset.status === 'draft' || 'firing'. */
+.thumb-draft-preview {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 36px 14px 12px;  /* top space lets the status badge breathe */
+  background: var(--surface-soft);
+  color: var(--ink);
+  overflow: hidden;
+}
+.thumb-draft-preview .dp-meta {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.4px;
+  text-transform: uppercase; color: #6f6c64;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.thumb-draft-preview .dp-prompt {
+  font-size: 12.5px; line-height: 1.42; color: #2a2825;
+  flex: 1; min-height: 0; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 7; -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+.thumb-draft-preview .dp-prompt.empty { color: #8a877f; font-style: italic; }
+.thumb-draft-preview .dp-refs {
+  font-family: var(--mono); font-size: 10.5px; color: #6f6c64; letter-spacing: 0.3px;
+}
 .thumb .vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.18) 100%); pointer-events: none; }
 
 .badge { position: absolute; top: 10px; left: 10px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 8px; border-radius: var(--r-pill); font-size: 11.5px; font-weight: 540; letter-spacing: -0.1px; color: var(--ink); background: var(--canvas); }
@@ -435,7 +462,12 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .history .when { font-family: var(--mono); font-size: 11px; letter-spacing: 0.4px; color: #8a877f; text-transform: uppercase; }
 
 .actions { position: sticky; bottom: 0; margin: var(--s-xl) calc(var(--s-md) * -1) calc(var(--s-section) * -1); padding: var(--s-md); background: linear-gradient(180deg, rgba(255,255,255,0) 0%, var(--canvas) 30%); border-top: 1px solid var(--hairline-soft); }
-.actions .primary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+/* Issue #32 — was: rigid 4-col grid (`repeat(4, 1fr)`). When the drawer was
+   narrow (drag-resized or on a small viewport) the pills clipped off-screen.
+   Now: flex-wrap so pills drop to a second row when there isn't horizontal
+   room for all four. min-width on the buttons keeps the labels readable. */
+.actions .primary { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.actions .primary .act-btn { flex: 1 1 auto; min-width: 96px; padding: 0 10px; }
 .act-btn { height: 40px; background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--r-pill); font-size: 13px; font-weight: 480; letter-spacing: -0.1px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .act-btn:hover { border-color: var(--ink); }
 .act-btn.accept { background: var(--block-mint); border-color: transparent; }
@@ -519,6 +551,19 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
   body:not(.sidebar-force-open) .brand .brand-mark, body:not(.sidebar-force-open) .brand .brand-name { display: none; }
   body:not(.sidebar-force-open) .topbar { grid-template-columns: 44px 1fr auto; }
   body:not(.sidebar-force-open) .sidebar { opacity: 0; pointer-events: none; }
+}
+
+/* Issue #32 — when the drawer IS open it eats 468px of horizontal space, so
+   the sidebar+drawer combined can crowd the grid even on a fairly wide
+   viewport (≤1480px is roughly where the canvas starts feeling cramped).
+   Push the auto-collapse threshold up while the drawer is visible. The
+   hamburger still works — toggling `sidebar-force-open` overrides this. */
+@media (max-width: 1480px) {
+  body:not(.sidebar-force-open):not(.drawer-hidden) { --col-sidebar: 0px; }
+  body:not(.sidebar-force-open):not(.drawer-hidden) .brand .brand-mark,
+  body:not(.sidebar-force-open):not(.drawer-hidden) .brand .brand-name { display: none; }
+  body:not(.sidebar-force-open):not(.drawer-hidden) .topbar { grid-template-columns: 44px 1fr auto; }
+  body:not(.sidebar-force-open):not(.drawer-hidden) .sidebar { opacity: 0; pointer-events: none; }
 }
 
 /* Phone-ish: drawer slides over the canvas instead of stealing a column */
@@ -1188,19 +1233,40 @@ function cardEl(asset, idx) {
   const status = STATUSES.find(s => s.key === asset.status) || STATUSES[0];
   const isVideo = asset.media_type === 'video';
   const isOrphan = !asset.has_sidecar;
+  // Issue #26 — draft cards render a text preview of the prompt instead of a black thumbnail.
+  // Status-gated to 'draft' / 'firing' (no file yet). All other statuses keep the image/video thumb.
+  const isDraftCard = asset.status === 'draft' || asset.status === 'firing';
+  const draftPayload = (asset.draft && asset.draft.payload) || {};
+  const draftPrompt = (draftPayload.prompt || '').trim();
+  const draftRefsCount = Array.isArray(draftPayload.image) ? draftPayload.image.length
+                      : (Array.isArray(draftPayload.refs) ? draftPayload.refs.length : 0);
   const meta = [asset.model || '', asset.workflow ? asset.workflow.split(/[-_]/)[0] : '', asset.pass_num ? `v${asset.pass_num}` : '']
     .filter(Boolean).join(' · ');
-  const shotLabel = asset.shot_id || (isOrphan ? '— unassigned' : asset.filename.slice(0, 14) + (asset.filename.length > 14 ? '…' : ''));
-  const shotStyle = asset.shot_id ? '' : 'style="color:#8a877f"';
+  // Card label fallback chain: shot_id → scene → filename slice (sidecar) → 'unassigned' (orphan)
+  // Issue #29 — when shot_id is empty but scene is set, the card was misleadingly labelled
+  // "unassigned" even though the asset IS assigned to a scene. Show the scene name instead.
+  const shotLabel = asset.shot_id
+    || asset.scene
+    || (isOrphan ? '— unassigned' : asset.filename.slice(0, 14) + (asset.filename.length > 14 ? '…' : ''));
+  const shotStyle = (asset.shot_id || asset.scene) ? '' : 'style="color:#8a877f"';
 
+  // Issue #26 — for drafts, render a text preview block in place of the image/frame
+  // so the Drafts tab is scannable. Real-media cards keep the original thumbnail.
+  const thumbInner = isDraftCard
+    ? `<div class="thumb-draft-preview">
+         ${meta ? `<div class="dp-meta">${escapeHtml(meta)}</div>` : ''}
+         <div class="dp-prompt ${draftPrompt ? '' : 'empty'}">${draftPrompt ? escapeHtml(draftPrompt) : 'No prompt yet'}</div>
+         ${draftRefsCount ? `<div class="dp-refs">refs: ${draftRefsCount} ${draftRefsCount === 1 ? 'img' : 'imgs'}</div>` : ''}
+       </div>`
+    : `<div class="frame"></div>
+       <img loading="lazy" alt="" src="${escapeHtml(asset.thumb_url || '')}" onerror="this.style.display='none'">
+       <div class="vignette"></div>`;
   a.innerHTML = `
     <div class="thumb-wrap">
       <div class="thumb ${ar}">
-        <div class="frame"></div>
-        <img loading="lazy" alt="" src="${escapeHtml(asset.thumb_url || '')}" onerror="this.style.display='none'">
-        <div class="vignette"></div>
+        ${thumbInner}
         <span class="badge" data-status="${escapeHtml(asset.status)}"><span class="dot"></span>${escapeHtml(status.label)}</span>
-        ${isVideo ? '<span class="video-mark"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M3 1.5 L8 5 L3 8.5 Z" fill="currentColor"/></svg></span>' : ''}
+        ${isVideo && !isDraftCard ? '<span class="video-mark"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M3 1.5 L8 5 L3 8.5 Z" fill="currentColor"/></svg></span>' : ''}
         <div class="quick">
           <button data-q="accepted" title="Accept">A</button>
           <button data-q="rejected" title="Reject">R</button>
@@ -1226,7 +1292,8 @@ function cardEl(asset, idx) {
   });
   // QoL: hover-to-play video preview directly on the card. No clicking-through
   // to the drawer needed for a quick scan-through. Mutes + loops by default.
-  if (isVideo && asset.media_url) {
+  // Skip for drafts — no file yet, would just 404 on /media/<id>.
+  if (isVideo && asset.media_url && !isDraftCard) {
     const thumb = a.querySelector('.thumb');
     let vid = null;
     let hoverTimer = null;

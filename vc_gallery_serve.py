@@ -451,7 +451,7 @@ def _extract_hf_url(notes_text: str | None) -> str | None:
 def _row_to_asset(row: sqlite3.Row, thumb_dir: Path) -> dict:
     file_path = row["file_path"]
     thumb_name = f"{lib.thumb_key(file_path)}.jpg"
-    return {
+    asset = {
         "id": row["id"],
         "filename": row["filename"],
         "file_path": file_path,
@@ -486,6 +486,29 @@ def _row_to_asset(row: sqlite3.Row, thumb_dir: Path) -> dict:
         # (BACKLOG #11). Falls through to jobs.source_url if absent there.
         "hf_url": _extract_hf_url(row["notes"]),
     }
+
+    # Issue #26: surface draft.payload on list responses too so card render
+    # can preview the prompt instead of showing a black thumbnail. Drafts have
+    # no media yet — the prompt body IS the preview. Cheap because drafts are
+    # a small subset and notes is already in the row.
+    if asset["status"] == "draft":
+        try:
+            note_data = json.loads(row["notes"]) if row["notes"] else {}
+        except (json.JSONDecodeError, TypeError):
+            note_data = {}
+        if isinstance(note_data, dict) and note_data.get("is_draft"):
+            asset["draft"] = {
+                "payload": note_data.get("payload", {}),
+                "image_refs": note_data.get("image_refs", []),
+                "estimated_cost": note_data.get("estimated_cost"),
+                "staged_at": note_data.get("staged_at"),
+                "last_edited_at": note_data.get("last_edited_at"),
+            }
+            # Hide the raw JSON string from clients — the structured `draft` block
+            # has everything, and director-facing `notes` should be empty for drafts.
+            asset["notes"] = ""
+
+    return asset
 
 
 def _build_where(params: dict) -> tuple[str, list[Any]]:
@@ -679,33 +702,20 @@ def _get_asset(asset_id: int) -> Optional[dict]:
         if not asset.get("hf_url"):
             asset["hf_url"] = job["source_url"]
 
-    # Draft-specific payload data — sourced from notes JSON. Drafts use status='draft'
-    # and store the full wrapper payload + refs in notes so the UI can preview before fire.
-    # Patch 2026-05-14 (IC-A): the raw `notes` JSON string is no longer leaked
-    # alongside the parsed `draft` block — the structured `draft.payload` is the
-    # truth, the JSON string was redundant + ugly (unicode-escaped). The asset.notes
-    # field is for director-typed comments, not draft state.
-    if asset["status"] == "draft":
+    # Draft-specific drawer enrichment — the base `draft` block (payload, image_refs,
+    # estimated_cost, staged_at, last_edited_at) is now populated by _row_to_asset so
+    # list responses can render card previews (Issue #26). Here we add the heavier
+    # `image_refs_resolved` block which needs _resolve_ref_to_url + STATE.folder and
+    # only matters for the drawer side panel.
+    if asset["status"] == "draft" and "draft" in asset:
         try:
             note_data = json.loads(row["notes"]) if row["notes"] else {}
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             note_data = {}
-        if isinstance(note_data, dict) and note_data.get("is_draft"):
-            asset["draft"] = {
-                "payload": note_data.get("payload", {}),
-                "image_refs": note_data.get("image_refs", []),
-                "estimated_cost": note_data.get("estimated_cost"),
-                "staged_at": note_data.get("staged_at"),
-                "last_edited_at": note_data.get("last_edited_at"),
-            }
-            # Resolve image_refs to /ref URLs too so the side panel can show thumbs
-            asset["draft"]["image_refs_resolved"] = [
-                _resolve_ref_to_url(r, STATE.folder)
-                for r in (note_data.get("image_refs") or [])
-            ]
-            # Hide the raw JSON string from clients — the structured `draft` block
-            # has everything, and director-facing `notes` should be empty for drafts.
-            asset["notes"] = ""
+        asset["draft"]["image_refs_resolved"] = [
+            _resolve_ref_to_url(r, STATE.folder)
+            for r in (note_data.get("image_refs") or [])
+        ]
 
     # Patch 2026-05-14 (drawer screenshot bug): for non-draft assets, the
     # `notes` column sometimes carries the wrapper's pulled_from metadata
