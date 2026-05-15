@@ -234,6 +234,15 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
         PRAGMA busy_timeout = 5000;
     """)
     conn.executescript(SCHEMA_SQL)
+    # Migration 2026-05-15: backfill NULL first_seen_at on legacy rows so the
+    # `recent` sort works. Pre-existing rows from before this column had
+    # NULL values; SQLite's NULL ordering is implementation-defined which
+    # quietly broke chronological sort. Backfill from last_updated_at →
+    # file_modified_at → now. Idempotent: WHERE IS NULL no-ops on clean DBs.
+    conn.execute(
+        "UPDATE assets SET first_seen_at = COALESCE(last_updated_at, file_modified_at, strftime('%s','now')) "
+        "WHERE first_seen_at IS NULL"
+    )
     return conn
 
 
