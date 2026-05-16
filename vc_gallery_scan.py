@@ -63,7 +63,7 @@ import re as _re
 # Matches patterns like SH450, SH1740A, sh120b at the start of the filename
 # (before the first underscore or other separator).
 # Case-insensitive. Captures the full shot token including optional letter suffix.
-_SHOT_ID_RE = _re.compile(r'\b(SH\d+[A-Z]?)\b', _re.IGNORECASE)
+_SHOT_ID_RE = _re.compile(r'(?:^|[_\-\s])(SH\d+[A-Z]?)(?=[_\-\s.]|$)', _re.IGNORECASE)
 
 
 def extract_shot_id(filename: str) -> str | None:
