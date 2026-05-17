@@ -326,7 +326,49 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .badge[data-status="legacy"]    { background: var(--surface-soft); color: #6f6c64; }
 .badge[data-status="legacy"]    .dot { background: #8a877f; }
 .badge[data-status="firing"]    { background: #e67e22; color: #fff; }
-.badge[data-status="firing"]    .dot { background: #fff; }
+.badge[data-status="firing"]    .dot { background: #fff; animation: pulse-dot 1.2s ease-in-out infinite; }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.6); } }
+
+/* Firing card — cooking shimmer overlay */
+.card[data-status="firing"] .thumb::after {
+  content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: linear-gradient(110deg, transparent 30%, rgba(230,126,34,0.12) 45%, rgba(230,126,34,0.22) 50%, rgba(230,126,34,0.12) 55%, transparent 70%);
+  background-size: 300% 100%;
+  animation: cooking-shimmer 2s ease-in-out infinite;
+  border-radius: inherit;
+}
+@keyframes cooking-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* Elapsed timer on firing cards */
+.firing-elapsed {
+  position: absolute; bottom: 10px; right: 10px; z-index: 3;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.4px;
+  background: rgba(230,126,34,0.92); color: #fff; padding: 3px 8px;
+  border-radius: var(--r-pill); font-weight: 500;
+}
+/* Scene overview (#31) */
+.scene-group { margin: 0 0 var(--s-xl); }
+.scene-header { display: flex; align-items: baseline; gap: 12px; margin: 0 0 var(--s-md); padding: 10px 14px; background: var(--surface-soft); border-radius: var(--r-md); cursor: pointer; }
+.scene-header:hover { background: var(--canvas); }
+.scene-header h3 { font-size: 15px; font-weight: 560; letter-spacing: -0.2px; margin: 0; text-transform: uppercase; }
+.scene-header .scene-counts { display: flex; gap: 10px; font-size: 12px; font-family: var(--mono); letter-spacing: 0.3px; color: #6f6c64; }
+.scene-header .sc-hero { color: var(--ink); font-weight: 540; }
+.scene-header .sc-accepted { color: #1f8a4d; }
+.scene-header .sc-review { color: #e67e22; }
+.scene-band { margin: 0 0 var(--s-sm); }
+.scene-band-label { font-size: 11px; font-weight: 540; letter-spacing: 0.5px; text-transform: uppercase; color: #8a877f; margin: 0 0 6px; padding: 0 4px; }
+.scene-band-label.hero { color: var(--ink); }
+.scene-band-label.accepted { color: #1f8a4d; }
+.scene-band-label.alt { color: #6f6c64; }
+.scene-band-label.review-band { color: #e67e22; }
+.scene-band-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.scene-band-grid .scene-card { width: 120px; cursor: pointer; }
+.scene-band-grid .scene-card img { width: 120px; height: 75px; object-fit: cover; border-radius: var(--r-sm); border: 1px solid var(--hairline); display: block; }
+.scene-band-grid .scene-card img.hero-ring { border: 2px solid var(--ink); box-shadow: 0 0 0 2px var(--block-lime); }
+.scene-band-grid .scene-card .sc-label { font-size: 11px; font-weight: 440; margin: 3px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.scene-empty { padding: 40px 20px; text-align: center; color: #8a877f; font-size: 14px; }
+.scene-unassigned { margin-top: var(--s-xl); padding: 10px 14px; background: var(--surface-soft); border-radius: var(--r-md); font-size: 13px; color: #6f6c64; }
+
 /* Fixes #21 — at S density (4+ cols), shrink badge to dot-only */
 body.density-s .badge { padding: 5px; gap: 0; font-size: 0; }
 body.density-s .badge .dot { width: 8px; height: 8px; }
@@ -818,9 +860,9 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="0.5" y="0.5" width="4.5" height="4.5" stroke="currentColor"/><rect x="7" y="0.5" width="4.5" height="4.5" stroke="currentColor"/><rect x="0.5" y="7" width="4.5" height="4.5" stroke="currentColor"/><rect x="7" y="7" width="4.5" height="4.5" stroke="currentColor"/></svg>
           Grid
         </button>
-        <button class="stub" data-view="board" title="Board view (coming soon)" disabled>
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="0.5" y="0.5" width="2.5" height="11" stroke="currentColor"/><rect x="4.5" y="0.5" width="2.5" height="8" stroke="currentColor"/><rect x="8.5" y="0.5" width="2.5" height="6" stroke="currentColor"/></svg>
-          Board
+        <button data-view="scenes" title="Scene overview — grouped by scene">
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="0.5" y="0.5" width="11" height="3" rx="1" stroke="currentColor"/><rect x="0.5" y="5.5" width="5" height="3" rx="1" stroke="currentColor"/><rect x="7" y="5.5" width="4.5" height="3" rx="1" stroke="currentColor"/></svg>
+          Scenes
         </button>
         <button class="stub" data-view="list" title="List view (coming soon)" disabled>
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M0.5 2 H11.5 M0.5 6 H11.5 M0.5 10 H11.5" stroke="currentColor"/></svg>
@@ -934,6 +976,9 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 
       <div id="grid-root"></div>
       <div id="grid-more" class="loading-more" style="display:none">Loading more…</div>
+
+      <!-- Scene overview panel (#31) — hidden by default, shown when view=scenes -->
+      <div id="scenes-root" style="display:none"></div>
     </main>
 
     <!-- Drawer -->
@@ -1304,12 +1349,15 @@ function cardEl(asset, idx) {
 
   // Issue #26 — for drafts, render a text preview block in place of the image/frame
   // so the Drafts tab is scannable. Real-media cards keep the original thumbnail.
+  // Firing cards get an elapsed timer so you can see what's cooking.
+  const isFiring = asset.status === 'firing';
+  const firingElapsed = isFiring ? `<span class="firing-elapsed" data-asset-id="${asset.id}"></span>` : '';
   const thumbInner = isDraftCard
     ? `<div class="thumb-draft-preview">
          ${meta ? `<div class="dp-meta">${escapeHtml(meta)}</div>` : ''}
-         <div class="dp-prompt ${draftPrompt ? '' : 'empty'}">${draftPrompt ? escapeHtml(draftPrompt) : 'No prompt yet'}</div>
+         <div class="dp-prompt ${draftPrompt ? '' : 'empty'}">${draftPrompt ? escapeHtml(draftPrompt) : isFiring ? 'Cooking…' : 'No prompt yet'}</div>
          ${draftRefsCount ? `<div class="dp-refs">refs: ${draftRefsCount} ${draftRefsCount === 1 ? 'img' : 'imgs'}</div>` : ''}
-       </div>`
+       </div>${firingElapsed}`
     : `<div class="frame"></div>
        <img loading="lazy" alt="" src="${escapeHtml(asset.thumb_url || '')}" onerror="this.style.display='none'">
        <div class="vignette"></div>`;
@@ -2053,6 +2101,75 @@ async function refreshFacets() {
   } catch {}
 }
 
+async function loadScenesView() {
+  const root = $('#scenes-root');
+  root.innerHTML = '<div class="scene-empty">Loading scenes…</div>';
+  let data;
+  try {
+    data = await api('/api/scenes');
+  } catch (e) {
+    root.innerHTML = `<div class="scene-empty">Failed to load scenes: ${e.message}</div>`;
+    return;
+  }
+  if (!data.scenes || data.scenes.length === 0) {
+    root.innerHTML = '<div class="scene-empty">No scenes found. Assign scenes to assets to see the overview.</div>';
+    return;
+  }
+  const html = data.scenes.map(s => {
+    const renderBand = (label, cls, assets) => {
+      if (!assets.length) return '';
+      const cards = assets.map(a => {
+        const ring = a.status === 'hero' ? 'hero-ring' : '';
+        const shotLabel = a.shot_id || a.filename.slice(0, 14);
+        return `<div class="scene-card" data-id="${a.id}" title="${escapeHtml(a.filename)}">
+          <img src="${escapeHtml(a.thumb_url || '')}" alt="" class="${ring}" loading="lazy" onerror="this.style.background='var(--surface-soft)'">
+          <div class="sc-label">${escapeHtml(shotLabel)}</div>
+        </div>`;
+      }).join('');
+      return `<div class="scene-band">
+        <div class="scene-band-label ${cls}">${label} · ${assets.length}</div>
+        <div class="scene-band-grid">${cards}</div>
+      </div>`;
+    };
+    return `<div class="scene-group">
+      <div class="scene-header" data-scene="${escapeHtml(s.scene)}">
+        <h3>${escapeHtml(s.scene)}</h3>
+        <div class="scene-counts">
+          ${s.counts.hero ? `<span class="sc-hero">★ ${s.counts.hero} hero</span>` : ''}
+          ${s.counts.accepted ? `<span class="sc-accepted">✓ ${s.counts.accepted} accepted</span>` : ''}
+          ${s.counts.alternate ? `<span>↻ ${s.counts.alternate} alt</span>` : ''}
+          ${s.counts.review ? `<span class="sc-review">● ${s.counts.review} review</span>` : ''}
+          <span>${s.counts.total} total</span>
+        </div>
+      </div>
+      ${renderBand('Hero', 'hero', s.hero)}
+      ${renderBand('Accepted', 'accepted', s.accepted)}
+      ${renderBand('Alternates', 'alt', s.alternate)}
+      ${renderBand('In review', 'review-band', s.review)}
+    </div>`;
+  }).join('');
+  const footer = data.unassigned_count
+    ? `<div class="scene-unassigned">${data.unassigned_count} asset${data.unassigned_count !== 1 ? 's' : ''} with no scene assigned</div>`
+    : '';
+  root.innerHTML = html + footer;
+  // Click a card → open in drawer (same as grid)
+  root.querySelectorAll('.scene-card').forEach(c => {
+    c.addEventListener('click', () => selectAsset(Number(c.dataset.id)));
+  });
+  // Click a scene header → filter grid to that scene
+  root.querySelectorAll('.scene-header').forEach(h => {
+    h.addEventListener('dblclick', () => {
+      state.filters.scene = h.dataset.scene;
+      // Switch back to grid view with scene filter applied
+      $$('.view-toggle button').forEach(x => x.classList.remove('active'));
+      $$('.view-toggle button[data-view="grid"]').forEach(x => x.classList.add('active'));
+      $('#grid-root').style.display = '';
+      $('#scenes-root').style.display = 'none';
+      refresh();
+    });
+  });
+}
+
 async function refreshFolder() {
   const info = await api('/api/folder');
   state.folder = info.current;
@@ -2217,10 +2334,21 @@ function bindTopbar() {
   $$('.view-toggle button').forEach(b => b.addEventListener('click', () => {
     if (b.classList.contains('stub')) {
       flashToast(`${b.dataset.view} view coming soon`);
-      return;  // don't change active state — that would falsely imply switch happened
+      return;
     }
     $$('.view-toggle button').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
+    const view = b.dataset.view;
+    // Toggle between grid and scenes view (#31)
+    if (view === 'scenes') {
+      $('#grid-root').style.display = 'none';
+      $('#grid-more').style.display = 'none';
+      $('#scenes-root').style.display = '';
+      loadScenesView();
+    } else {
+      $('#grid-root').style.display = '';
+      $('#scenes-root').style.display = 'none';
+    }
   }));
 
   // Sidebar collapse toggle (left button in brand + floating handle)
@@ -2429,6 +2557,27 @@ function fmtAgo(secs) {
   return `${Math.floor(secs/3600)}h ${Math.floor((secs%3600)/60)}m`;
 }
 
+function updateFiringCardTimers(fires) {
+  // Match running fires to their card's elapsed timer by asset_id
+  const runningByAsset = {};
+  for (const f of fires) {
+    if (f.state === 'running' && f.asset_id != null) {
+      runningByAsset[f.asset_id] = f;
+    }
+  }
+  document.querySelectorAll('.firing-elapsed').forEach(el => {
+    const aid = Number(el.dataset.assetId);
+    const fire = runningByAsset[aid];
+    if (fire) {
+      el.textContent = fmtAgo(fire.duration_s || 0);
+      el.style.display = '';
+    } else {
+      // No matching fire found (might have just completed) — show generic
+      el.textContent = '...';
+    }
+  });
+}
+
 async function refreshFires(forceRender) {
   let data;
   try {
@@ -2452,6 +2601,8 @@ async function refreshFires(forceRender) {
     pill.style.display = 'none';
     pill.classList.remove('has-running');
   }
+  // Update elapsed timers on firing cards in the grid
+  updateFiringCardTimers(fires);
   // Render list when panel open
   if (firesState.open && (forceRender || firesState.viewingPid === null)) renderFires();
   // If viewing a specific log, refresh that too

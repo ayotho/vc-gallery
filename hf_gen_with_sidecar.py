@@ -99,6 +99,21 @@ EXIT_TO_CLASS = {
 DEFAULT_WAIT_TIMEOUT_SECONDS = 600  # 10 min — covers Seedance/Kling/Veo video gens; image gens still finish in <2 min
 SUBPROCESS_TIMEOUT_BUFFER = 30  # extra seconds for CLI graceful exit after its --timeout fires
 
+
+def _notify_server(server_url: str, path: str, payload: dict) -> None:
+    """Best-effort POST to the gallery server. Swallows all errors so a dead
+    server never breaks a generation. (#28 — agent-fired wrapper visibility.)"""
+    if not server_url:
+        return
+    try:
+        from urllib.request import Request, urlopen
+        url = server_url.rstrip("/") + path
+        data = json.dumps(payload).encode("utf-8")
+        req = Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+        urlopen(req, timeout=3)
+    except Exception:
+        pass  # best-effort — never block the gen
+
 # ──────────────────────────────────────────────────────────────────
 # Paths
 # ──────────────────────────────────────────────────────────────────
@@ -804,6 +819,12 @@ def main() -> int:
              "so the fire registry can locate the log deterministically (otherwise the "
              "server's precomputed path and the wrapper's timestamped one diverge — C1).",
     )
+    ap.add_argument(
+        "--notify-server",
+        default=os.environ.get("VC_CANVAS_URL", "http://127.0.0.1:8770"),
+        help="Gallery server URL to notify on fire start/complete (#28). "
+             "Set to empty string to disable. Default: $VC_CANVAS_URL or localhost:8770.",
+    )
     args = ap.parse_args()
 
     if args.payload_file:
@@ -848,6 +869,23 @@ def main() -> int:
         # Log capture is best-effort; if it fails, fall back to terminal-only.
         print(f"[warn] log capture disabled: {e}", file=real_stderr)
         log_fp = None
+
+    # Notify gallery server that this fire is starting (#28)
+    notify_url = getattr(args, "notify_server", "") or ""
+    if notify_url and not args.dry_run:
+        _notify_server(notify_url, "/api/fires", {
+            "pid": os.getpid(),
+            "asset_id": payload.get("asset_id"),
+            "filename": filename,
+            "shot_id": payload.get("shot_id"),
+            "model": payload.get("model"),
+            "workflow": payload.get("workflow"),
+            "client": payload.get("client"),
+            "project": payload.get("project"),
+            "started_at": time.time(),
+            "log_path": str(log_path),
+            "payload_file": getattr(args, "payload_file", None),
+        })
 
     try:
         exit_code = run(payload, dry_run=args.dry_run, gallery_root=args.gallery_root, quiet=args.quiet)
@@ -898,6 +936,13 @@ def main() -> int:
                 })
         except Exception:
             pass  # observability is best-effort
+
+    # Notify gallery server that this fire is complete (#28)
+    if notify_url and not args.dry_run:
+        _notify_server(notify_url, f"/api/fires/{os.getpid()}/complete", {
+            "exit_code": exit_code,
+            "finished_at": time.time(),
+        })
 
     # ─── Close log fp + restore stdio ───
     sys.stdout = real_stdout
