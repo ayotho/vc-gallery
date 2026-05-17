@@ -815,11 +815,15 @@ def _list_assets(params: dict) -> dict:
         where, values = _build_where_no_prompt(params)
         base_sql = "FROM assets a" + where
 
-    # Wrap with latest-per-shot CTE when requested
+    # Wrap with latest-per-shot CTE when requested.
+    # The CTE must appear BEFORE the SELECT keyword, so it's kept as a
+    # separate prefix rather than concatenated into base_sql (which is
+    # interpolated after "SELECT ... ").
+    cte_prefix = ""
     if latest_only:
         # Pick the newest asset per shot_id (by first_seen_at), plus all
         # assets without a shot_id (they can't be deduplicated).
-        cte = (
+        cte_prefix = (
             "WITH latest AS ("
             "  SELECT id FROM assets"
             "  WHERE (shot_id IS NULL OR shot_id = '')"
@@ -831,15 +835,16 @@ def _list_assets(params: dict) -> dict:
             ") "
         )
         # Inject the CTE filter into the WHERE clause
+        latest_filter = " AND a.id IN (SELECT id FROM latest)"
         if where:
-            base_sql = cte + base_sql + " AND a.id IN (SELECT id FROM latest)"
+            base_sql = base_sql + latest_filter
         else:
             if need_prompt_join:
-                base_sql = cte + "FROM assets a LEFT JOIN prompts p ON p.asset_id = a.id WHERE a.id IN (SELECT id FROM latest)"
+                base_sql = "FROM assets a LEFT JOIN prompts p ON p.asset_id = a.id WHERE a.id IN (SELECT id FROM latest)"
             else:
-                base_sql = cte + "FROM assets a WHERE a.id IN (SELECT id FROM latest)"
+                base_sql = "FROM assets a WHERE a.id IN (SELECT id FROM latest)"
 
-    total = conn.execute(f"SELECT count(*) {base_sql}", values).fetchone()[0]
+    total = conn.execute(f"{cte_prefix}SELECT count(*) {base_sql}", values).fetchone()[0]
 
     sort = (params.get("sort") or ["recent"])[0]
     # Patch 2026-05-14:
@@ -867,7 +872,7 @@ def _list_assets(params: dict) -> dict:
     }.get(sort, "a.first_seen_at DESC")
 
     rows = conn.execute(
-        f"SELECT a.* {base_sql} ORDER BY {order} LIMIT ? OFFSET ?",
+        f"{cte_prefix}SELECT a.* {base_sql} ORDER BY {order} LIMIT ? OFFSET ?",
         values + [limit, offset],
     ).fetchall()
 
