@@ -44,6 +44,7 @@ import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from collections import OrderedDict
 from typing import Any, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -689,6 +690,7 @@ def _row_to_asset(row: sqlite3.Row, thumb_dir: Path) -> dict:
         "height": row["height"],
         "duration_sec": row["duration_sec"],
         "file_modified_at": row["file_modified_at"],
+        "first_seen_at": row["first_seen_at"],
         "source_type": row["source_type"],
         "has_sidecar": bool(row["has_sidecar"]),
         "sidecar_path": row["sidecar_path"],
@@ -796,6 +798,12 @@ def _list_assets(params: dict) -> dict:
     offset = int((params.get("offset") or [0])[0])
     limit = max(1, min(limit, 1000))
 
+    # "Latest only" toggle: when latest_per_shot=1, keep only the most recent
+    # asset per shot_id. Assets with NULL/empty shot_id are always included
+    # (they can't be grouped). Implemented as a CTE so all downstream WHERE,
+    # ORDER, LIMIT still work unchanged.
+    latest_only = (params.get("latest_per_shot") or [""])[0] in ("1", "true")
+
     # Only JOIN prompts if a prompt-related filter is active (q or has_prompt).
     # Skipping the JOIN on the common path (browse/filter by status/scene/model)
     # avoids a full scan of the prompts table.
@@ -806,6 +814,30 @@ def _list_assets(params: dict) -> dict:
     else:
         where, values = _build_where_no_prompt(params)
         base_sql = "FROM assets a" + where
+
+    # Wrap with latest-per-shot CTE when requested
+    if latest_only:
+        # Pick the newest asset per shot_id (by first_seen_at), plus all
+        # assets without a shot_id (they can't be deduplicated).
+        cte = (
+            "WITH latest AS ("
+            "  SELECT id FROM assets"
+            "  WHERE (shot_id IS NULL OR shot_id = '')"
+            "  UNION ALL"
+            "  SELECT id FROM ("
+            "    SELECT id, ROW_NUMBER() OVER (PARTITION BY shot_id ORDER BY first_seen_at DESC) rn"
+            "    FROM assets WHERE shot_id IS NOT NULL AND shot_id != ''"
+            "  ) WHERE rn = 1"
+            ") "
+        )
+        # Inject the CTE filter into the WHERE clause
+        if where:
+            base_sql = cte + base_sql + " AND a.id IN (SELECT id FROM latest)"
+        else:
+            if need_prompt_join:
+                base_sql = cte + "FROM assets a LEFT JOIN prompts p ON p.asset_id = a.id WHERE a.id IN (SELECT id FROM latest)"
+            else:
+                base_sql = cte + "FROM assets a WHERE a.id IN (SELECT id FROM latest)"
 
     total = conn.execute(f"SELECT count(*) {base_sql}", values).fetchone()[0]
 
@@ -840,7 +872,71 @@ def _list_assets(params: dict) -> dict:
     ).fetchall()
 
     items = [_row_to_asset(r, STATE.thumb_dir) for r in rows]
+
+    # group_by=shot: post-process into shot groups for the "Shots" view.
+    # Each group has a shot_id, a "cover" asset (hero > accepted > latest),
+    # the count of versions, and the full list of member assets.
+    group_by = (params.get("group_by") or [""])[0]
+    if group_by == "shot":
+        groups: OrderedDict[str, list] = OrderedDict()
+        ungrouped: list = []
+        for item in items:
+            sid = item.get("shot_id") or ""
+            if sid:
+                groups.setdefault(sid, []).append(item)
+            else:
+                ungrouped.append(item)
+
+        STATUS_RANK = {"hero": 0, "accepted": 1, "alternate": 2, "review": 3}
+        shot_groups = []
+        for sid, members in groups.items():
+            # Pick cover: hero > accepted > latest by first_seen_at
+            cover = min(members, key=lambda m: (
+                STATUS_RANK.get(m["status"], 9),
+                -(m.get("first_seen_at") or 0),
+            ))
+            shot_groups.append({
+                "shot_id": sid,
+                "scene": cover.get("scene") or "",
+                "cover": cover,
+                "count": len(members),
+                "members": members,
+            })
+        return {
+            "items": items, "total": total, "limit": limit, "offset": offset,
+            "shot_groups": shot_groups,
+            "ungrouped": ungrouped,
+        }
+
     return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+def _compare_assets(params: dict) -> dict:
+    """Return full asset detail for 2-6 assets for side-by-side comparison.
+    Query: GET /api/compare?ids=1,2,3"""
+    conn = STATE.conn()
+    ids_raw = (params.get("ids") or [""])[0]
+    if not ids_raw:
+        return {"error": "ids parameter required", "items": []}
+    try:
+        ids = [int(x.strip()) for x in ids_raw.split(",") if x.strip()]
+    except ValueError:
+        return {"error": "ids must be comma-separated integers", "items": []}
+    if len(ids) < 2 or len(ids) > 6:
+        return {"error": "Compare requires 2-6 assets", "items": []}
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"SELECT a.* FROM assets a WHERE a.id IN ({placeholders})", ids
+    ).fetchall()
+    items = [_row_to_asset(r, STATE.thumb_dir) for r in rows]
+    for item in items:
+        pr = conn.execute(
+            "SELECT prompt_text FROM prompts WHERE asset_id = ?", (item["id"],)
+        ).fetchone()
+        item["prompt_text"] = pr["prompt_text"] if pr else None
+    id_order = {aid: i for i, aid in enumerate(ids)}
+    items.sort(key=lambda x: id_order.get(x["id"], 999))
+    return {"items": items, "count": len(items)}
 
 
 def _facet_counts(params: dict | None = None) -> dict:
@@ -2138,6 +2234,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_error_json(409, "no working folder set")
                 return
             self._send_json(200, _list_assets(params))
+            return
+
+        if path == "/api/compare":
+            if STATE.folder is None:
+                self._send_error_json(409, "no working folder set")
+                return
+            self._send_json(200, _compare_assets(params))
             return
 
         m = re.match(r"^/api/assets/(\d+)$", path)

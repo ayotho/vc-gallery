@@ -29,12 +29,17 @@ Properties:
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import sys
 import time
 from pathlib import Path
+
+_WIN = sys.platform == "win32"
+if _WIN:
+    import msvcrt
+else:
+    import fcntl
 
 DEFAULT_MODE = 0o600
 
@@ -55,12 +60,20 @@ def append_jsonl(path: str | Path, record: dict, mode: int = DEFAULT_MODE) -> No
     line = json.dumps(enriched, ensure_ascii=False, separators=(",", ":")) + "\n"
 
     flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+    if _WIN:
+        flags |= os.O_BINARY
     fd = os.open(str(p), flags, mode)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        os.write(fd, line.encode("utf-8"))
-        os.fsync(fd)
-        # flock auto-released on close
+        data = line.encode("utf-8")
+        if _WIN:
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            os.write(fd, data)
+            os.fsync(fd)
+            # lock released on close
+        else:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            os.write(fd, data)
+            os.fsync(fd)
     finally:
         os.close(fd)
 

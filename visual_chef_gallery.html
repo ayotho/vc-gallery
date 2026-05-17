@@ -272,7 +272,36 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .multi-select-bar .ms-act.reject { background: var(--block-coral); border-color: transparent; }
 .multi-select-bar .ms-clear { font-size: 12px; padding: 5px 12px; border-radius: var(--r-pill); background: var(--ink); color: var(--on-primary); cursor: pointer; }
 .multi-select-bar .ms-clear:hover { opacity: 0.92; }
+.multi-select-bar .ms-act.compare { background: var(--surface-soft); border-color: var(--accent-magenta, #d97757); color: var(--accent-magenta, #d97757); font-weight: 600; }
 
+/* Latest Only toggle */
+.latest-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 480; color: #6f6c64; cursor: pointer; padding: 0 8px; user-select: none; }
+.latest-toggle input { accent-color: var(--primary); cursor: pointer; }
+.latest-toggle:hover { color: var(--ink); }
+
+/* Compare overlay */
+.compare-overlay { position: fixed; inset: 0; z-index: 900; background: rgba(0,0,0,0.88); display: flex; flex-direction: column; }
+.compare-overlay[hidden] { display: none; }
+.compare-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; background: #1a1917; border-bottom: 1px solid #333; }
+.compare-title { color: #fff; font-size: 14px; font-weight: 540; }
+.compare-close { background: #333; color: #fff; border: none; padding: 6px 16px; border-radius: var(--r-pill); cursor: pointer; font-size: 13px; }
+.compare-close:hover { background: #555; }
+.compare-strip { flex: 1; display: flex; gap: 12px; padding: 24px; overflow-x: auto; align-items: stretch; }
+.compare-card { flex: 1; min-width: 240px; max-width: 50%; background: #222; border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; border: 2px solid transparent; }
+.compare-card.compare-hero { border-color: var(--block-lime); }
+.compare-card .cc-media { flex: 1; position: relative; background: #111; display: flex; align-items: center; justify-content: center; min-height: 200px; }
+.compare-card .cc-media img, .compare-card .cc-media video { max-width: 100%; max-height: 100%; object-fit: contain; }
+.compare-card .cc-info { padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.compare-card .cc-shot { color: #ccc; font-size: 13px; font-weight: 540; }
+.compare-card .cc-meta { color: #888; font-size: 11.5px; }
+.compare-card .cc-status { display: inline-block; padding: 2px 10px; border-radius: var(--r-pill); font-size: 11px; font-weight: 540; }
+.compare-card .cc-actions { display: flex; gap: 6px; margin-top: 4px; }
+.compare-card .cc-actions button { font-size: 11px; font-weight: 500; padding: 4px 12px; border-radius: var(--r-pill); cursor: pointer; border: 1px solid #444; background: #2a2a28; color: #ddd; }
+.compare-card .cc-actions button:hover { border-color: #888; }
+.compare-card .cc-actions .cc-hero { background: var(--block-lime); border-color: transparent; color: #222; }
+.compare-card .cc-actions .cc-accept { background: var(--block-mint); border-color: transparent; color: #222; }
+
+/* Shots view */
 /* Asset-ID chip in drawer header — small mono pill so director can quote "#2095" in chat */
 .asset-id-chip { font-family: var(--mono); font-size: 10.5px; color: #6f6c64; background: var(--surface-soft); padding: 2px 7px; border-radius: var(--r-pill); margin-left: 8px; user-select: text; }
 @media (max-width: 700px) { .asset-id-chip { display: none; } }
@@ -366,6 +395,25 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .scene-band-grid .scene-card img { width: 120px; height: 75px; object-fit: cover; border-radius: var(--r-sm); border: 1px solid var(--hairline); display: block; }
 .scene-band-grid .scene-card img.hero-ring { border: 2px solid var(--ink); box-shadow: 0 0 0 2px var(--block-lime); }
 .scene-band-grid .scene-card .sc-label { font-size: 11px; font-weight: 440; margin: 3px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+/* ---- Shots view (group by shot_id) ---- */
+.shot-group { margin: 0 0 var(--s-lg); }
+.shot-header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--surface-soft); border-radius: var(--r-md); cursor: pointer; margin: 0 0 8px; }
+.shot-header:hover { background: var(--canvas); }
+.shot-header h3 { font-size: 14px; font-weight: 560; letter-spacing: -0.2px; margin: 0; }
+.shot-header .shot-scene { font-size: 11.5px; color: #8a877f; font-family: var(--mono); }
+.shot-header .shot-ver-count { font-size: 11.5px; color: #6f6c64; font-family: var(--mono); margin-left: auto; }
+.shot-header .shot-cover-status { font-size: 10px; font-weight: 540; padding: 2px 8px; border-radius: var(--r-pill); }
+.shot-versions { display: flex; gap: 8px; overflow-x: auto; padding: 0 4px 8px; }
+.shot-version { min-width: 160px; max-width: 220px; flex-shrink: 0; cursor: pointer; border-radius: var(--r-md); overflow: hidden; border: 2px solid transparent; background: var(--surface-soft); transition: border-color 0.15s; }
+.shot-version:hover { border-color: var(--primary); }
+.shot-version.shot-hero { border-color: var(--block-lime); }
+.shot-version img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
+.shot-version .sv-info { padding: 6px 8px; display: flex; align-items: center; gap: 6px; }
+.shot-version .sv-badge { font-size: 10px; font-weight: 540; padding: 1px 7px; border-radius: var(--r-pill); }
+.shot-version .sv-meta { font-size: 10.5px; color: #8a877f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ---- Latest-only toggle ---- */
+.latest-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 480; color: var(--ink); cursor: pointer; padding: 0 8px; }
+.latest-toggle input { accent-color: var(--primary); }
 .scene-empty { padding: 40px 20px; text-align: center; color: #8a877f; font-size: 14px; }
 .scene-unassigned { margin-top: var(--s-xl); padding: 10px 14px; background: var(--surface-soft); border-radius: var(--r-md); font-size: 13px; color: #6f6c64; }
 
@@ -864,11 +912,14 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="0.5" y="0.5" width="11" height="3" rx="1" stroke="currentColor"/><rect x="0.5" y="5.5" width="5" height="3" rx="1" stroke="currentColor"/><rect x="7" y="5.5" width="4.5" height="3" rx="1" stroke="currentColor"/></svg>
           Scenes
         </button>
-        <button class="stub" data-view="list" title="List view (coming soon)" disabled>
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M0.5 2 H11.5 M0.5 6 H11.5 M0.5 10 H11.5" stroke="currentColor"/></svg>
-          List
+        <button data-view="shots" title="Group by shot — see all versions clustered by shot_id">
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="0.5" y="0.5" width="3.5" height="11" rx="1" stroke="currentColor"/><rect x="5.5" y="0.5" width="3.5" height="7" rx="1" stroke="currentColor"/><rect x="5.5" y="9" width="3.5" height="2.5" rx="1" stroke="currentColor"/></svg>
+          Shots
         </button>
       </div>
+      <label class="latest-toggle" title="Show only the latest version per shot — hides older iterations">
+        <input type="checkbox" id="chk-latest-only"> Latest only
+      </label>
       <button class="icon-btn fires-pill" id="btn-fires" title="Active wrapper fires" style="position: relative; display: none;">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1 C 9 4 12 5 12 9 a 4 4 0 0 1 -8 0 c 0 -3 2 -5 4 -8 z" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>
         <span class="fires-count" id="fires-count">0</span>
@@ -970,6 +1021,7 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
           <button class="ms-act revise" data-status="revise">↻ Revise</button>
           <button class="ms-act reject" data-status="rejected">✕ Reject</button>
         </span>
+        <button class="ms-act compare" id="ms-compare" title="Compare selected cards side by side">⊞ Compare</button>
         <span class="ms-hint">Cmd-click to add · Shift-click for range</span>
         <button class="ms-clear" id="ms-clear">Clear</button>
       </div>
@@ -979,7 +1031,19 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 
       <!-- Scene overview panel (#31) — hidden by default, shown when view=scenes -->
       <div id="scenes-root" style="display:none"></div>
+
+      <!-- Shots view — groups cards by shot_id, shows version counts -->
+      <div id="shots-root" style="display:none"></div>
     </main>
+
+    <!-- Compare overlay — shows 2-4 selected assets side by side for quick A/B judging -->
+    <div id="compare-overlay" class="compare-overlay" hidden>
+      <div class="compare-header">
+        <span class="compare-title">Comparing <span id="compare-count">0</span> versions</span>
+        <button class="compare-close" id="compare-close">✕ Close</button>
+      </div>
+      <div class="compare-strip" id="compare-strip"></div>
+    </div>
 
     <!-- Drawer -->
     <aside class="drawer hidden" id="drawer">
@@ -1139,6 +1203,7 @@ const state = {
   facets: {},
   totalAssets: 0,
   filters: { status: '', source_type: '', model: '', workflow: '', scene: '', shot_id: '', media_type: '', has_prompt: false, has_sidecar: false, q: '' },
+  latestOnly: false,
   sort: loadPref('vc.gallery.sort', 'recent'),
   items: [],
   total: 0,
@@ -2034,6 +2099,7 @@ function buildQuery() {
   if (f.has_prompt) params.set('has_prompt', '1');
   if (f.has_sidecar) params.set('has_sidecar', '1');
   if (f.q) params.set('q', f.q);
+  if (state.latestOnly) params.set('latest_per_shot', '1');
   params.set('sort', state.sort);
   params.set('limit', state.limit);
   params.set('offset', state.offset);
@@ -2168,6 +2234,157 @@ async function loadScenesView() {
       refresh();
     });
   });
+}
+
+// -------- Shots View (group by shot_id) -----------------------------------
+
+async function loadShotsView() {
+  const root = $('#shots-root');
+  root.innerHTML = '<div class="scene-empty">Loading shots…</div>';
+  let data;
+  try {
+    // Use group_by=shot on the existing assets endpoint with a large limit
+    const q = buildQuery().replace(/limit=\d+/, 'limit=1000').replace(/offset=\d+/, 'offset=0');
+    data = await api(`/api/assets?${q}&group_by=shot`);
+  } catch (e) {
+    root.innerHTML = `<div class="scene-empty">Failed to load shots: ${e.message}</div>`;
+    return;
+  }
+  if (!data.shot_groups || data.shot_groups.length === 0) {
+    root.innerHTML = '<div class="scene-empty">No shot groups found. Assign shot_ids to assets to see grouping.</div>';
+    return;
+  }
+  const STATUS_COLORS = {};
+  STATUSES.forEach(s => STATUS_COLORS[s.key] = s.swatch);
+
+  const html = data.shot_groups.map(g => {
+    const cover = g.cover;
+    const statusObj = STATUSES.find(s => s.key === cover.status) || STATUSES[0];
+    const memberCards = g.members.map(m => {
+      const mStatus = STATUSES.find(s => s.key === m.status) || STATUSES[0];
+      const isHero = m.status === 'hero';
+      return `<div class="shot-version ${isHero ? 'shot-hero' : ''}" data-id="${m.id}" title="${escapeHtml(m.filename)}">
+        <img src="${escapeHtml(m.thumb_url || '')}" alt="" loading="lazy" onerror="this.style.background='var(--surface-soft)'">
+        <div class="sv-info">
+          <span class="sv-badge" style="background:${mStatus.swatch}; color:${mStatus.dark ? '#fff' : '#222'}">${mStatus.label}</span>
+          <span class="sv-meta">${escapeHtml(m.model || '')} ${m.pass_num ? 'v' + m.pass_num : ''}</span>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="shot-group">
+      <div class="shot-header" data-shot="${escapeHtml(g.shot_id || '')}">
+        <h3>${escapeHtml(g.shot_id || 'No shot ID')}</h3>
+        <span class="shot-scene">${escapeHtml(g.scene || '')}</span>
+        <span class="shot-ver-count">${g.count} version${g.count !== 1 ? 's' : ''}</span>
+        <span class="shot-cover-status" style="background:${statusObj.swatch}; color:${statusObj.dark ? '#fff' : '#222'}">${statusObj.label}</span>
+      </div>
+      <div class="shot-versions">${memberCards}</div>
+    </div>`;
+  }).join('');
+
+  const ungrouped = data.ungrouped || [];
+  const ungroupedHtml = ungrouped.length
+    ? `<div class="shot-group"><div class="shot-header"><h3 style="color:#8a877f">No shot ID</h3><span class="shot-ver-count">${ungrouped.length} assets</span></div>
+       <div class="shot-versions">${ungrouped.map(m => {
+         const mStatus = STATUSES.find(s => s.key === m.status) || STATUSES[0];
+         return `<div class="shot-version" data-id="${m.id}" title="${escapeHtml(m.filename)}">
+           <img src="${escapeHtml(m.thumb_url || '')}" alt="" loading="lazy" onerror="this.style.background='var(--surface-soft)'">
+           <div class="sv-info"><span class="sv-badge" style="background:${mStatus.swatch}; color:${mStatus.dark ? '#fff' : '#222'}">${mStatus.label}</span></div>
+         </div>`;
+       }).join('')}</div></div>`
+    : '';
+
+  root.innerHTML = html + ungroupedHtml;
+
+  // Click version card → open in drawer
+  root.querySelectorAll('.shot-version').forEach(c => {
+    c.addEventListener('click', () => selectAsset(Number(c.dataset.id)));
+  });
+  // Double-click shot header → filter grid to that shot
+  root.querySelectorAll('.shot-header').forEach(h => {
+    h.addEventListener('dblclick', () => {
+      const sid = h.dataset.shot;
+      if (!sid) return;
+      state.filters.shot_id = sid;
+      $$('.view-toggle button').forEach(x => x.classList.remove('active'));
+      $$('.view-toggle button[data-view="grid"]').forEach(x => x.classList.add('active'));
+      $('#grid-root').style.display = '';
+      $('#shots-root').style.display = 'none';
+      refresh();
+    });
+  });
+}
+
+// -------- Compare mode ---------------------------------------------------
+
+async function openCompare(ids) {
+  if (!ids || ids.length < 2) {
+    flashToast('Select 2-6 cards to compare', 'error');
+    return;
+  }
+  if (ids.length > 6) {
+    flashToast('Compare supports up to 6 cards', 'error');
+    return;
+  }
+  const overlay = $('#compare-overlay');
+  const strip = $('#compare-strip');
+  const countEl = $('#compare-count');
+  countEl.textContent = ids.length;
+  strip.innerHTML = '<div style="color:#888;padding:20px">Loading…</div>';
+  overlay.hidden = false;
+
+  let data;
+  try {
+    data = await api(`/api/compare?ids=${ids.join(',')}`);
+  } catch (e) {
+    strip.innerHTML = `<div style="color:#f66;padding:20px">Failed: ${e.message}</div>`;
+    return;
+  }
+  if (data.error) {
+    strip.innerHTML = `<div style="color:#f66;padding:20px">${escapeHtml(data.error)}</div>`;
+    return;
+  }
+
+  strip.innerHTML = data.items.map(a => {
+    const statusObj = STATUSES.find(s => s.key === a.status) || STATUSES[0];
+    const isVideo = a.media_type === 'video';
+    const mediaEl = isVideo
+      ? `<video src="${escapeHtml(a.media_url || '')}" controls loop muted playsinline preload="metadata" style="max-width:100%;max-height:100%;object-fit:contain"></video>`
+      : `<img src="${escapeHtml(a.thumb_url || '')}" alt="" style="max-width:100%;max-height:100%;object-fit:contain">`;
+    const isHero = a.status === 'hero';
+    return `<div class="compare-card ${isHero ? 'compare-hero' : ''}" data-id="${a.id}">
+      <div class="cc-media">${mediaEl}</div>
+      <div class="cc-info">
+        <div class="cc-shot">${escapeHtml(a.shot_id || a.filename)}</div>
+        <div class="cc-meta">${escapeHtml([a.model || '', a.workflow || '', a.pass_num ? 'v' + a.pass_num : ''].filter(Boolean).join(' · '))}</div>
+        <span class="cc-status" style="background:${statusObj.swatch}; color:${statusObj.dark ? '#fff' : '#222'}">${statusObj.label}</span>
+        ${a.prompt_text ? `<div class="cc-meta" style="margin-top:4px;max-height:60px;overflow-y:auto;font-size:11px;color:#999">${escapeHtml(a.prompt_text.slice(0, 200))}</div>` : ''}
+        <div class="cc-actions">
+          <button class="cc-hero" data-q="hero" data-id="${a.id}">★ Hero</button>
+          <button class="cc-accept" data-q="accepted" data-id="${a.id}">✓ Accept</button>
+          <button data-q="rejected" data-id="${a.id}">✕ Reject</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Wire up status buttons inside compare cards
+  strip.querySelectorAll('.cc-actions button').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const aid = Number(btn.dataset.id);
+      const target = btn.dataset.q;
+      await patchAsset(aid, { status: target });
+      flashToast(`Marked ${target}`);
+      // Refresh compare view
+      openCompare(ids);
+    });
+  });
+}
+
+function closeCompare() {
+  $('#compare-overlay').hidden = true;
+  $('#compare-strip').innerHTML = '';
 }
 
 async function refreshFolder() {
@@ -2339,15 +2556,20 @@ function bindTopbar() {
     $$('.view-toggle button').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
     const view = b.dataset.view;
-    // Toggle between grid and scenes view (#31)
+    // Toggle between grid, scenes, and shots views
+    $('#grid-root').style.display = 'none';
+    $('#grid-more').style.display = 'none';
+    $('#scenes-root').style.display = 'none';
+    $('#shots-root').style.display = 'none';
     if (view === 'scenes') {
-      $('#grid-root').style.display = 'none';
-      $('#grid-more').style.display = 'none';
       $('#scenes-root').style.display = '';
       loadScenesView();
+    } else if (view === 'shots') {
+      $('#shots-root').style.display = '';
+      loadShotsView();
     } else {
       $('#grid-root').style.display = '';
-      $('#scenes-root').style.display = 'none';
+      $('#grid-more').style.display = state.doneLoading ? 'none' : 'block';
     }
   }));
 
@@ -2956,6 +3178,35 @@ function navigateLightbox(delta) {
       }
     });
   });
+  // Latest-only toggle — show only newest per shot_id
+  const chkLatest = $('#chk-latest-only');
+  if (chkLatest) {
+    chkLatest.addEventListener('change', () => {
+      state.latestOnly = chkLatest.checked;
+      refresh();
+    });
+  }
+
+  // Compare button in multi-select bar
+  const msCompare = $('#ms-compare');
+  if (msCompare) {
+    msCompare.addEventListener('click', () => {
+      const ids = Array.from(state.multiSelection);
+      openCompare(ids);
+    });
+  }
+
+  // Compare overlay close
+  const cmpClose = $('#compare-close');
+  if (cmpClose) cmpClose.addEventListener('click', closeCompare);
+  // Escape to close compare
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#compare-overlay').hidden) {
+      closeCompare();
+      e.stopPropagation();
+    }
+  });
+
   await refresh();
 
   // Live auto-refresh: chain polls via setTimeout so a slow poll can't stack
