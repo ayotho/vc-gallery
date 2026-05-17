@@ -61,19 +61,19 @@ class Tester:
     def check(self, name: str, cond: bool, detail: str = "") -> None:
         if cond:
             self.passed.append(name)
-            print(f"  ✓ {name}")
+            print(f"  [PASS] {name}")
         else:
             self.failed.append((name, detail))
-            print(f"  ✗ {name} — {detail}")
+            print(f"  [FAIL] {name} -- {detail}")
 
     def summary(self) -> int:
         total = len(self.passed) + len(self.failed)
-        print(f"\n{'─' * 60}")
-        print(f"Total: {total}  ·  Passed: {len(self.passed)}  ·  Failed: {len(self.failed)}")
+        print(f"\n{'=' * 60}")
+        print(f"Total: {total}  |  Passed: {len(self.passed)}  |  Failed: {len(self.failed)}")
         if self.failed:
             print("\nFAILURES:")
             for name, detail in self.failed:
-                print(f"  ✗ {name}: {detail}")
+                print(f"  [FAIL] {name}: {detail}")
             return 1
         return 0
 
