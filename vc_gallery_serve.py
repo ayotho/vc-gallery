@@ -2761,6 +2761,11 @@ class Handler(BaseHTTPRequestHandler):
         end = int(m.group(2)) if m.group(2) else size - 1
         end = min(end, size - 1)
         length = end - start + 1
+        if length <= 0:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.end_headers()
+            return
         self.send_response(206)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(length))

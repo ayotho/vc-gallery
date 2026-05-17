@@ -1413,7 +1413,7 @@ function cardEl(asset, idx) {
   // "unassigned" even though the asset IS assigned to a scene. Show the scene name instead.
   const shotLabel = asset.shot_id
     || asset.scene
-    || (isOrphan ? '— unassigned' : asset.filename.slice(0, 14) + (asset.filename.length > 14 ? '…' : ''));
+    || (isOrphan ? '— unassigned' : (asset.filename || '').slice(0, 14) + ((asset.filename || '').length > 14 ? '…' : ''));
   const shotStyle = (asset.shot_id || asset.scene) ? '' : 'style="color:#8a877f"';
 
   // Issue #26 — for drafts, render a text preview block in place of the image/frame
@@ -1446,7 +1446,7 @@ function cardEl(asset, idx) {
     </div>
     <div class="card-foot">
       <span class="shot-id" ${shotStyle}>${escapeHtml(shotLabel)}</span>
-      <span class="card-meta">${meta ? escapeHtml(meta) : `<span class="raw">${escapeHtml(asset.source_type.replace('_', ' '))}</span>`}</span>
+      <span class="card-meta">${meta ? escapeHtml(meta) : `<span class="raw">${escapeHtml((asset.source_type || '').replace('_', ' '))}</span>`}</span>
     </div>
   `;
 
@@ -1731,7 +1731,7 @@ async function fillDrawer(id) {
   if (asset.pass_num) subParts.push(`pass ${asset.pass_num}`);
   const eyebrowTxt = [
     asset.shot_id || '—',
-    asset.source_type.replace('_', ' ').toUpperCase(),
+    (asset.source_type || '').replace('_', ' ').toUpperCase(),
     asset.pass_num ? `V${asset.pass_num}` : '',
   ].filter(Boolean).join(' · ');
 
@@ -1963,8 +1963,8 @@ async function fillDrawer(id) {
   if (dupeBtn) {
     dupeBtn.addEventListener('click', async () => {
       try {
-        const stem = asset.filename.replace(/\.[^.]+$/, '');
-        const ext = asset.filename.includes('.') ? '.' + asset.filename.split('.').pop() : '.mp4';
+        const stem = (asset.filename || 'untitled').replace(/\.[^.]+$/, '');
+        const ext = (asset.filename || '').includes('.') ? '.' + asset.filename.split('.').pop() : '.mp4';
         const newName = `${stem}_variant${ext}`;
         const draftPayload = {
           filename: newName,
@@ -3047,7 +3047,7 @@ async function lbSaveAnnotated() {
   const blob = await new Promise(r => out.toBlob(r, 'image/png'));
   // Use File System Access API if available; fall back to download
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const name = lb.asset.filename.replace(/\.[a-z]+$/i, `_annotated_${stamp}.png`);
+  const name = (lb.asset.filename || 'untitled').replace(/\.[a-z]+$/i, `_annotated_${stamp}.png`);
   if (window.showSaveFilePicker) {
     try {
       const handle = await window.showSaveFilePicker({
