@@ -279,6 +279,10 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .latest-toggle input { accent-color: var(--primary); cursor: pointer; }
 .latest-toggle:hover { color: var(--ink); }
 
+/* Drag-to-inherit */
+.card.dragging { opacity: 0.4; }
+.card.drop-target { outline: 2px solid var(--primary); outline-offset: -2px; box-shadow: 0 0 12px rgba(100,200,100,0.3); }
+
 /* Compare overlay */
 .compare-overlay { position: fixed; inset: 0; z-index: 900; background: rgba(0,0,0,0.88); display: flex; flex-direction: column; }
 .compare-overlay[hidden] { display: none; }
@@ -1445,6 +1449,37 @@ function cardEl(asset, idx) {
       <span class="card-meta">${meta ? escapeHtml(meta) : `<span class="raw">${escapeHtml(asset.source_type.replace('_', ' '))}</span>`}</span>
     </div>
   `;
+
+  // Drag-to-inherit: drag card A onto card B → A inherits B's shot_id + scene
+  a.draggable = true;
+  a.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/plain', String(asset.id));
+    e.dataTransfer.effectAllowed = 'copy';
+    a.classList.add('dragging');
+  });
+  a.addEventListener('dragend', () => a.classList.remove('dragging'));
+  a.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    a.classList.add('drop-target');
+  });
+  a.addEventListener('dragleave', () => a.classList.remove('drop-target'));
+  a.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    a.classList.remove('drop-target');
+    const draggedId = Number(e.dataTransfer.getData('text/plain'));
+    if (!draggedId || draggedId === asset.id) return;
+    // Inherit shot_id + scene from the drop target
+    const inherit = {};
+    if (asset.shot_id) inherit.shot_id = asset.shot_id;
+    if (asset.scene) inherit.scene = asset.scene;
+    if (Object.keys(inherit).length === 0) {
+      flashToast('Target card has no shot_id or scene to inherit');
+      return;
+    }
+    await patchAsset(draggedId, inherit);
+    flashToast('Inherited ' + Object.keys(inherit).join(' + ') + ' from ' + (asset.shot_id || asset.scene));
+  });
 
   a.addEventListener('click', (e) => handleCardClick(asset.id, e));
   a.querySelectorAll('.quick button').forEach(b => {
