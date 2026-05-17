@@ -1123,6 +1123,46 @@ def _get_asset(asset_id: int) -> Optional[dict]:
     return asset
 
 
+def _inherit_properties(target_id: int, source_id: int) -> Optional[dict]:
+    """Copy shot_id and scene from source asset to target asset.
+
+    Lightweight drag-to-inherit: director drags card A onto card B, A picks up
+    B's shot_id and scene so it shows up in the correct Shots group and responds
+    to Latest Only filtering. No stacks table, no collapsing — just property
+    inheritance via drag.
+    """
+    conn = STATE.conn()
+    source = conn.execute("SELECT shot_id, scene FROM assets WHERE id = ?", (source_id,)).fetchone()
+    if source is None:
+        return None
+    target = conn.execute("SELECT id, shot_id, scene FROM assets WHERE id = ?", (target_id,)).fetchone()
+    if target is None:
+        return None
+
+    updates = {}
+    if source["shot_id"]:
+        updates["shot_id"] = source["shot_id"]
+    if source["scene"]:
+        updates["scene"] = source["scene"]
+
+    if not updates:
+        return _get_asset(target_id)
+
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    vals = list(updates.values()) + [target_id]
+    conn.execute(f"UPDATE assets SET {set_clause}, last_updated_at = strftime('%s','now') WHERE id = ?", vals)
+
+    # Audit trail
+    note = f"Inherited from #{source_id}: {', '.join(f'{k}={v}' for k, v in updates.items())}"
+    conn.execute(
+        "INSERT INTO reviews (asset_id, from_status, to_status, note, reviewer) "
+        "VALUES (?, (SELECT status FROM assets WHERE id = ?), (SELECT status FROM assets WHERE id = ?), ?, 'director')",
+        (target_id, target_id, target_id, note),
+    )
+    conn.commit()
+    return _get_asset(target_id)
+
+
 UPDATABLE_FIELDS = {"status", "notes", "shot_id", "scene", "score", "project", "client"}
 # Issue #33 — `filename` is handled out-of-band via _rename_asset because it
 # carries an on-disk move. `file_path` is derived (gallery dir + filename) and
@@ -2334,6 +2374,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_error_json(404, "asset not found")
                 return
             self._send_json(200, updated)
+            return
+
+        m = re.match(r"^/api/assets/(\d+)/inherit$", path)
+        if m:
+            if STATE.folder is None:
+                self._send_error_json(409, "no working folder set")
+                return
+            payload = self._read_json_body()
+            source_id = payload.get("source_id")
+            if not source_id:
+                self._send_error_json(400, "missing 'source_id'")
+                return
+            result = _inherit_properties(int(m.group(1)), int(source_id))
+            if result is None:
+                self._send_error_json(404, "asset not found")
+                return
+            self._send_json(200, result)
             return
 
         m = re.match(r"^/api/assets/(\d+)/open$", path)
