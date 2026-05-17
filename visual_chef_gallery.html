@@ -1469,16 +1469,22 @@ function cardEl(asset, idx) {
     a.classList.remove('drop-target');
     const draggedId = Number(e.dataTransfer.getData('text/plain'));
     if (!draggedId || draggedId === asset.id) return;
-    // Inherit shot_id + scene from the drop target
-    const inherit = {};
-    if (asset.shot_id) inherit.shot_id = asset.shot_id;
-    if (asset.scene) inherit.scene = asset.scene;
-    if (Object.keys(inherit).length === 0) {
+    if (!asset.shot_id && !asset.scene) {
       flashToast('Target card has no shot_id or scene to inherit');
       return;
     }
-    await patchAsset(draggedId, inherit);
-    flashToast('Inherited ' + Object.keys(inherit).join(' + ') + ' from ' + (asset.shot_id || asset.scene));
+    try {
+      await api('/api/assets/' + draggedId + '/inherit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_id: asset.id }),
+      });
+      const props = [asset.shot_id ? 'shot_id' : '', asset.scene ? 'scene' : ''].filter(Boolean);
+      flashToast('Inherited ' + props.join(' + ') + ' from ' + (asset.shot_id || asset.scene));
+      refresh();
+    } catch (err) {
+      flashToast('Inherit failed: ' + err.message, 'error');
+    }
   });
 
   a.addEventListener('click', (e) => handleCardClick(asset.id, e));
