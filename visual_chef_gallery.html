@@ -1605,14 +1605,18 @@ function renderGrid(append = false) {
       cover._stack.needsAttention = members.some(m => m.status === 'review' || m.status === 'revise');
       stackedItems.push(cover);
     });
-    // #48: Sort stacks by newest member so new variants pull the stack to top
-    stackedItems.sort((a, b) => {
-      const aNewest = Math.max(...(a._stack?.members || [a]).map(m => m.first_seen_at || 0));
-      const bNewest = Math.max(...(b._stack?.members || [b]).map(m => m.first_seen_at || 0));
-      return bNewest - aNewest;
-    });
     ungrouped.forEach(item => stackedItems.push(item));
     state._renderItems = stackedItems;
+    // #48: Sort stacks by newest member so new variants pull the stack to top
+    state._renderItems.sort((a, b) => {
+      const aTime = a._stack
+        ? Math.max(...a._stack.members.map(m => m.first_seen_at || 0))
+        : (a.first_seen_at || 0);
+      const bTime = b._stack
+        ? Math.max(...b._stack.members.map(m => m.first_seen_at || 0))
+        : (b.first_seen_at || 0);
+      return bTime - aTime;  // DESC — newest first
+    });
     // Stacking must re-render the full grid (groups may have changed)
     append = false;
   } else {
@@ -2065,7 +2069,7 @@ async function fillDrawer(id) {
           payload: {
             model: asset.model || '',
             prompt: asset.prompt || '',
-            image: asset.file_path ? [asset.file_path] : [],
+            image: (asset.refs && asset.refs.length > 0) ? asset.refs : (asset.file_path ? [asset.file_path] : []),
           },
         };
         const res = await api('/api/draft', {

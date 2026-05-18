@@ -1275,6 +1275,25 @@ def _patch_asset(asset_id: int, payload: dict) -> Optional[dict]:
                 (asset_id, old_status, new_status, payload.get("note", "")),
             )
 
+        # Hero cascade: demote prior heroes for same shot to 'accepted'
+        if "status" in changes and changes.get("status") == "hero":
+            shot_row = conn.execute("SELECT shot_id FROM assets WHERE id = ?", (asset_id,)).fetchone()
+            if shot_row and shot_row["shot_id"]:
+                prior_heroes = conn.execute(
+                    "SELECT id FROM assets WHERE shot_id = ? AND status = 'hero' AND id != ?",
+                    (shot_row["shot_id"], asset_id),
+                ).fetchall()
+                for ph in prior_heroes:
+                    conn.execute(
+                        "UPDATE assets SET status = 'accepted', last_updated_at = strftime('%s','now') WHERE id = ?",
+                        (ph["id"],),
+                    )
+                    conn.execute(
+                        "INSERT INTO reviews (asset_id, from_status, to_status, note, reviewer) "
+                        "VALUES (?, 'hero', 'accepted', 'Auto-demoted: new hero picked for same shot', 'system')",
+                        (ph["id"],),
+                    )
+
         _audit("asset.patched", {
             "asset_id": asset_id,
             "filename": row["filename"],
