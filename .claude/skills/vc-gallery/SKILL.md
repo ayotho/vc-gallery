@@ -1,9 +1,9 @@
 ---
 name: vc-gallery
-description: "Visual Chef Gallery — the central asset dashboard for all AI-generated images and videos. Use when: reviewing/searching assets, staging drafts for generation, firing wrapper jobs, checking fire status, reading the director's selection, or pushing new assets. Runs at localhost:8770. Replaces the old 8766 viewer entirely."
+description: "VC Gallery — the central asset dashboard for AI-generated images and videos. Full API reference, visual stacking, drafts, fires, scenes, compare mode. Runs at localhost:8770. Use for: browsing/searching assets, staging drafts, firing generations, checking fire status, reviewing versions, managing shots and scenes."
 ---
 
-# /vc-gallery — Visual Chef Canvas (Gallery)
+# /vc-gallery — VC Gallery
 
 The gallery server at `http://127.0.0.1:8770/` is the single source of truth for all generated assets (images + videos) across every client project. Every agent (image-chef, video-chef, acquisition-chef) talks to it.
 
@@ -11,28 +11,16 @@ The gallery server at `http://127.0.0.1:8770/` is the single source of truth for
 
 ```bash
 # Windows (this PC)
-python3 "C:/Users/aytho/vc-gallery/vc_gallery_serve.py"
+python3 "C:/Users/aytho/vc-canvas/vc_gallery_serve.py"
 
 # Mac
-python3 "/Users/ayo/Coding projects/vc-gallery/vc_gallery_serve.py"
+python3 "/Users/ayo/Coding projects/vc-canvas/vc_gallery_serve.py"
 
 # With explicit folder
 python3 vc_gallery_serve.py --folder "/path/to/working/folder"
 ```
 
 Port 8770. Localhost only. One process serves one director.
-
-## When to invoke
-
-| Trigger | Action |
-|---------|--------|
-| `/select` or "look at this", "the selected one" | Read selection (see Selection Bridge below) |
-| `/select 2095` or `#2095` | Fetch specific asset |
-| "stage a draft", "queue this gen" | POST /api/draft |
-| "fire it", "run the draft" | POST /api/draft/{id}/fire |
-| "what's firing", "check status" | GET /api/fires |
-| "search for SH450" | GET /api/assets?q=SH450 |
-| "mark as hero/accepted/rejected" | POST /api/assets/{id}/reviews |
 
 ---
 
@@ -58,10 +46,15 @@ GET  /api/assets            -> {items[], total, limit, offset}
   ?shot_id=SH450            filter by shot
   ?q=nathan                 full-text search (filename, shot_id, prompt)
   ?sort=recent|oldest|name|name-desc|id|id-desc|status|shot|model
-  ?limit=50&offset=0
+  ?limit=50&offset=0        (max 2000)
+  ?latest_per_shot=1        show only newest card per shot_id
+  ?group_by=shot            returns shot_groups[] with cover + members
+  ?updated_after=1716000000 filter by last_updated_at >= epoch (for polling)
 
 GET  /api/assets/{id}       -> full asset detail + prompt + refs_resolved + review_history
 GET  /api/facets            -> {status: {review: 45, hero: 12, ...}, source_type: {...}, ...}
+GET  /api/compare?ids=1,2,3 -> {items[], count} (2-6 assets, side-by-side detail + prompts)
+GET  /api/scenes            -> {scenes[], total_scenes, unassigned_count}
 ```
 
 ### Asset detail fields
@@ -92,8 +85,6 @@ PATCH /api/assets/{id}
 
 Updatable fields: `status`, `shot_id`, `scene`, `notes`, `score`, `tags` (array)
 
-Use this to tag shot IDs after generating, add notes, or update scene labels. The dashboard has inline editing for shot_id and scene in the drawer.
-
 ### Status changes
 
 ```
@@ -110,21 +101,39 @@ POST /api/rename
   body: {asset_id: 123, new_filename: "SH450_kling_v2.mp4", move_file: true}
 ```
 
-### Selection Bridge (director picks)
+### Inherit properties (drag-to-assign)
 
 ```
-GET  /api/selection         -> {asset_ids[], assets[], count, set_at, set_by, folder}
-POST /api/selection         -> body: {asset_ids: [1,2,3]}   (agents: rarely needed)
-DELETE /api/selection       -> clear
+POST /api/assets/{id}/inherit
+  body: {source_id: 280}
 ```
 
-When the director clicks a card in the dashboard, the selection updates. Read it to know what they're looking at.
+Copies `shot_id` and `scene` from source asset to target asset. Used by the drag-to-inherit UI (director drags card A onto card B, A picks up B's shot_id + scene). Logged in the reviews audit trail.
 
 ### Open in Finder/Explorer
 
 ```
 POST /api/assets/{id}/open  -> reveals the file in Finder (macOS) or Explorer (Windows)
 ```
+
+---
+
+## Visual Stacking (shot_id grouping)
+
+Cards with the same `shot_id` visually stack in the gallery grid. This is automatic, no extra API calls needed.
+
+**How it works:**
+- The grid groups cards by `shot_id` client-side when "Stack versions" is toggled on (default)
+- Each stack shows one cover card (hero > accepted > latest) with a version count badge ("4v")
+- Shadow-card depth effect behind stacked cards
+- Amber attention dot on the badge if any version is `review` or `revise`
+- Click a stack to open the drawer, which shows a **version strip** of all siblings below the main preview
+- Click any sibling in the strip to switch focus. "Compare all" opens the compare overlay.
+- Cards without shot_id render as normal flat cards
+
+**For agents:** Always set `shot_id` on every draft/fire. That's how your output gets organized into stacks. Different models of the same shot stack together. Image + video of the same shot stack together. To see all versions: `GET /api/assets?shot_id=SH450`. To find shots needing revision: `GET /api/assets?status=revise&updated_after=<epoch>`.
+
+**Drag-to-inherit:** Director can drag card A onto card B in the grid. Card A inherits B's `shot_id` and `scene` via `POST /api/assets/{id}/inherit`. Logged in the audit trail.
 
 ---
 
@@ -203,6 +212,22 @@ Fire states: `running`, `completed`, `failed`
 
 ---
 
+## External fire registration (agent-spawned wrappers, #28)
+
+When an agent fires the wrapper directly (not through the draft UI), the wrapper auto-notifies the server via `--notify-server` (defaults to `$VC_CANVAS_URL` or `http://127.0.0.1:8770`).
+
+Agents can also register fires manually:
+
+```
+POST /api/fires
+  body: {pid: 12345, asset_id: 100, filename: "SH450_kling_v1.mp4",
+         shot_id: "SH450", model: "kling3_0", workflow: "cref.v2",
+         started_at: 1716000000, log_path: "/path/to/log"}
+
+POST /api/fires/<pid>/complete
+  body: {exit_code: 0, finished_at: 1716000060}
+```
+
 ## Debug endpoints
 
 ```
@@ -210,8 +235,6 @@ GET /api/debug/orphans          -> {zero_byte_rows[], missing_file_rows[]}
 GET /api/debug/recent-events    -> [...last N audit events...]
   ?n=20
 ```
-
----
 
 ## File serving
 
@@ -253,15 +276,24 @@ To actually see a ref image, use the Read tool on the raw path (available in `re
 
 ---
 
-## Replaces the old viewer
+## Changelog (2026-05-18)
 
-The old `viewer.py` on port 8766 is deprecated. All references to port 8766, `image_outputs.json`, or `POST /api/add` are legacy. This gallery (port 8770) is the canonical system.
+- **Visual stacking** — cards with same shot_id group in grid with version badges, shadow depth, attention dots. Drawer shows version strip with "Compare all"
+- **Shots view** — new tab grouping assets by shot_id with expandable headers
+- **Compare mode** — Ctrl+select 2-6 cards, full-screen side-by-side with inline status actions
+- **Stack versions toggle** — replaces Latest Only, default ON
+- **Drag-to-inherit** — `POST /api/assets/{id}/inherit` copies shot_id + scene
+- **Scene overview** — `GET /api/scenes` groups assets by scene with status bands
+- **External fire registration** — wrapper auto-notifies server (#28)
+- **Speed fixes** — conditional prompt JOIN, batch updates, indexed queries (#42)
+- **`updated_after` filter** — `?updated_after=<epoch>` for agent revision polling
+- **Limit cap** — raised to 2000 for full client-side grouping
 
 ## Known gaps
 
-- **No auto-start.** Server must be started manually each session. No launchd/systemd service yet.
-- **Cross-platform ref paths.** If image-chef on Mac writes refs with `/Users/ayo/...` paths, they won't resolve when viewed on Windows (and vice versa). The gallery still shows the asset but ref previews break. Workaround: set `VC_REF_ALLOW_ROOTS` env var to include the local equivalent path.
-- **Scanner backfill for shot_id** (issue #2) is not yet implemented. Shot IDs are only populated when: (a) the wrapper/draft sets one explicitly, or (b) you edit it manually in the drawer. A regex-based auto-tagger from filenames (e.g. `SH450_kling_v1.mp4` -> `SH450`) would cover legacy assets.
+- **No auto-start.** Server must be started manually each session.
+- **Cross-platform ref paths.** Mac refs don't resolve on Windows and vice versa. Workaround: `VC_REF_ALLOW_ROOTS` env var.
+- **Shot_id coverage.** Legacy assets with free-form filenames have no shot_id. They render as flat cards, not stacks.
 
 ## Server not running?
 
