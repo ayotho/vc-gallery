@@ -24,20 +24,42 @@ Overnight QA + bug fix tracker. Cron runs every 40 min.
 - [x] facets + filters — cross-filter works, SQL injection blocked
 - [x] Code review — no logic bugs found
 
-## GitHub bugs to fix tonight
+## GitHub bugs fixed tonight
 
-- [ ] #48 — Stacks sort by newest member (new variant pulls stack to top)
-- [ ] #46 — Hero promote doesn't demote prior hero (multiple heroes per shot)
-- [ ] #44 — Variant draft uses output as ref instead of original source refs
-- [ ] Stacking append bug — infinite scroll appends bypass grouping, flat cards appear below stacks
+- [x] #48 — Stacks sort by newest member (fe52baf) — stacks sort by max(first_seen_at) of members
+- [x] #46 — Hero promote cascade (fe52baf) — auto-demotes prior heroes for same shot_id to accepted
+- [x] #44 — Variant draft refs (fe52baf) — uses asset.refs (original sources) not file_path (output)
+- [x] #47 — Select All Visible (527b857) — Cmd+A, stack expansion at dispatch, partial-load disclosure
+- [x] #7 — Compare mode (closed, shipped earlier)
+- [x] #24 — Skill split (closed, /select + /vc-gallery)
+- [x] Stacking append bug (581fda0) — renderGrid always re-groups when stacking on
+- [x] Counter accuracy — shows visible stacks count with "(N cards)" suffix
 
-## Bugs found
+## Bugs found + fixed
 
-- Stacking append bug: `renderGrid(append=true)` skips grouping (line 1577: `!append` guard), appended cards render flat
+- Stacking append: `renderGrid(append=true)` skipped grouping. Fix: always re-group full items array, force `append=false` when stacking.
+- Counter mismatch: showed total items not visible stacks. Fix: use `_renderItems.length` with suffix.
+- Hero pile-up: no cascade on promote. Fix: demote prior heroes in same transaction.
+- Variant i2i loop: dupe-draft used output as ref. Fix: use `asset.refs` (original sources).
+- Stack sort: new variants orphaned at top. Fix: sort stacks by newest member timestamp.
+- Select All partial load: no disclosure. Fix: show "(of M loaded)" when not all fetched.
 
-## Bugs fixed
+## Next up (cron picks from here)
 
-_(none yet)_
+- [ ] Code review pass: read 200 lines of HTML, look for null refs, race conditions, missing error handling
+- [ ] Code review pass: read 200 lines of serve.py, same checks
+- [ ] Test visual stacking with real data: manually set shot_ids on a few assets via PATCH, verify grouping renders
+- [ ] Test Select All + bulk reject: verify stack expansion sends all member IDs
+- [ ] Test drawer version strip: open a stacked card, verify siblings show, Compare All works
+- [ ] Test drag-to-inherit: drag card onto another, verify shot_id copies, grid re-groups
+- [ ] Test hero cascade: set hero on one card, verify prior hero demotes
+- [ ] Verify Cmd+A doesn't fire when typing in search box
+- [ ] Set up Playwright e2e test suite (playwright 1.57.0 already installed)
+- [ ] Playwright: test grid renders cards, stacking toggle groups them
+- [ ] Playwright: test drag-to-inherit (drag card A onto B, verify toast + re-group)
+- [ ] Playwright: test Cmd+A select all, verify multi-select bar count
+- [ ] Playwright: test drawer version strip renders siblings on stacked card click
+- [ ] Playwright: screenshot each state for visual regression baseline
 
 ## Parked (not building yet)
 
