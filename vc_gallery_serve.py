@@ -753,6 +753,13 @@ def _build_where_no_prompt(params: dict) -> tuple[str, list[Any]]:
                 continue
             clauses.append(f"a.{key} = ?")
             values.append(v)
+    if params.get("updated_after"):
+        v = params["updated_after"][0] if isinstance(params["updated_after"], list) else params["updated_after"]
+        try:
+            clauses.append("a.last_updated_at >= ?")
+            values.append(float(v))
+        except (ValueError, TypeError):
+            pass
     if not clauses:
         return "", values
     return " WHERE " + " AND ".join(clauses), values
@@ -786,6 +793,13 @@ def _build_where(params: dict) -> tuple[str, list[Any]]:
         )
         values.extend([like, like, like, like, like])
 
+    if params.get("updated_after"):
+        v = params["updated_after"][0] if isinstance(params["updated_after"], list) else params["updated_after"]
+        try:
+            clauses.append("a.last_updated_at >= ?")
+            values.append(float(v))
+        except (ValueError, TypeError):
+            pass
     if not clauses:
         return "", values
     return " WHERE " + " AND ".join(clauses), values
@@ -796,7 +810,7 @@ def _list_assets(params: dict) -> dict:
 
     limit = int((params.get("limit") or [200])[0])
     offset = int((params.get("offset") or [0])[0])
-    limit = max(1, min(limit, 1000))
+    limit = max(1, min(limit, 2000))
 
     # "Latest only" toggle: when latest_per_shot=1, keep only the most recent
     # asset per shot_id. Assets with NULL/empty shot_id are always included

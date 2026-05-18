@@ -283,6 +283,24 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .card.dragging { opacity: 0.4; }
 .card.drop-target { outline: 2px solid var(--primary); outline-offset: -2px; box-shadow: 0 0 12px rgba(100,200,100,0.3); }
 
+/* Stacked cards — shadow depth effect showing multiple versions behind the cover */
+.card.stacked { position: relative; }
+.card.stacked::before, .card.stacked::after {
+  content: ''; position: absolute; inset: 2px; border-radius: var(--r-md);
+  border: 1px solid var(--hairline); background: var(--surface-soft); z-index: -1;
+}
+.card.stacked::before { transform: translate(3px, -3px); opacity: 0.7; }
+.card.stacked::after { transform: translate(6px, -6px); opacity: 0.4; }
+.stack-badge {
+  position: absolute; bottom: 6px; right: 6px; z-index: 3;
+  background: rgba(0,0,0,0.7); color: #fff; font-size: 10px; font-weight: 600;
+  padding: 2px 6px; border-radius: var(--r-pill); font-family: var(--mono);
+  backdrop-filter: blur(4px);
+}
+.stack-badge.attention { background: rgba(200,120,0,0.85); }
+.stack-badge.pulse { animation: stack-pulse 0.4s ease-out; }
+@keyframes stack-pulse { 0% { transform: scale(1); } 50% { transform: scale(1.3); } 100% { transform: scale(1); } }
+
 /* Compare overlay */
 .compare-overlay { position: fixed; inset: 0; z-index: 900; background: rgba(0,0,0,0.88); display: flex; flex-direction: column; }
 .compare-overlay[hidden] { display: none; }
@@ -869,6 +887,20 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
   font-size: 11px;
   text-align: center;
 }
+/* Version strip */
+.drawer-version-strip { padding: 8px 14px 12px; border-top: 1px solid var(--hairline); }
+.drawer-version-strip[hidden] { display: none; }
+.vs-label { font-size: 12px; font-weight: 540; color: #6f6c64; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+.vs-compare-all { font-size: 11px; padding: 3px 10px; border-radius: var(--r-pill); background: var(--surface-soft); border: 1px solid var(--hairline); cursor: pointer; color: var(--ink); font-weight: 500; }
+.vs-compare-all:hover { border-color: var(--ink); }
+.vs-scroll { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.vs-card { min-width: 100px; max-width: 130px; flex-shrink: 0; cursor: pointer; border-radius: var(--r-md); overflow: hidden; border: 2px solid transparent; background: var(--surface-soft); transition: border-color 0.15s; position: relative; }
+.vs-card:hover { border-color: var(--primary); }
+.vs-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
+.vs-card .vs-video-mark { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 16px; color: rgba(255,255,255,0.8); pointer-events: none; }
+.vs-meta { padding: 4px 6px; display: flex; align-items: center; gap: 4px; }
+.vs-badge { font-size: 9px; font-weight: 540; padding: 1px 5px; border-radius: var(--r-pill); white-space: nowrap; }
+.vs-model { font-size: 10px; color: #8a877f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>
 </head>
 <body class="drawer-hidden">
@@ -921,8 +953,8 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
           Shots
         </button>
       </div>
-      <label class="latest-toggle" title="Show only the latest version per shot — hides older iterations">
-        <input type="checkbox" id="chk-latest-only"> Latest only
+      <label class="latest-toggle" title="Group versions by shot — shows a cover card with a count badge">
+        <input type="checkbox" id="chk-latest-only" checked> Stack versions
       </label>
       <button class="icon-btn fires-pill" id="btn-fires" title="Active wrapper fires" style="position: relative; display: none;">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1 C 9 4 12 5 12 9 a 4 4 0 0 1 -8 0 c 0 -3 2 -5 4 -8 z" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>
@@ -1085,6 +1117,7 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
       </div>
 
       <div class="drawer-body" id="drawer-body"></div>
+      <div id="drawer-version-strip" class="drawer-version-strip" hidden></div>
     </aside>
 
   </div>
@@ -1208,6 +1241,7 @@ const state = {
   totalAssets: 0,
   filters: { status: '', source_type: '', model: '', workflow: '', scene: '', shot_id: '', media_type: '', has_prompt: false, has_sidecar: false, q: '' },
   latestOnly: false,
+  stackVersions: true,
   sort: loadPref('vc.gallery.sort', 'recent'),
   items: [],
   total: 0,
@@ -1391,9 +1425,14 @@ function cardEl(asset, idx) {
   const isCurrent = asset.id === state.selectedId;
   const isMulti = state.multiSelection.has(asset.id);
   a.className = 'card' + (isCurrent ? ' selected' : '') + (isMulti ? ' multi-selected' : '');
+  if (asset._stack) a.classList.add('stacked');
   a.dataset.status = asset.status;
   a.dataset.id = asset.id;
   a.dataset.idx = idx;
+  if (asset._stack) {
+    a.dataset.stackShotId = asset._stack.shot_id;
+    a.dataset.stackCount = asset._stack.count;
+  }
 
   const ar = cardAR();
   const status = STATUSES.find(s => s.key === asset.status) || STATUSES[0];
@@ -1435,6 +1474,7 @@ function cardEl(asset, idx) {
       <div class="thumb ${ar}">
         ${thumbInner}
         <span class="badge" data-status="${escapeHtml(asset.status)}"><span class="dot"></span>${escapeHtml(status.label)}</span>
+        ${asset._stack ? `<span class="stack-badge${asset._stack.needsAttention ? ' attention' : ''}">${asset._stack.count}v</span>` : ''}
         ${isVideo && !isDraftCard ? '<span class="video-mark"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M3 1.5 L8 5 L3 8.5 Z" fill="currentColor"/></svg></span>' : ''}
         <div class="quick">
           <button data-q="accepted" title="Accept">A</button>
@@ -1532,6 +1572,47 @@ function renderGrid(append = false) {
     root.innerHTML = `<div class="empty"><h3>Nothing matches yet</h3>No assets fit those filters. Try clearing one.</div>`;
     return;
   }
+
+  // If stacking is on, group items by shot_id before rendering
+  if (state.stackVersions && !append) {
+    const grouped = {};
+    const ungrouped = [];
+    const order = []; // preserve first-seen order of shot_ids
+    state.items.forEach(item => {
+      const sid = item.shot_id;
+      if (sid) {
+        if (!grouped[sid]) { grouped[sid] = []; order.push(sid); }
+        grouped[sid].push(item);
+      } else {
+        ungrouped.push(item);
+      }
+    });
+    // For stacks, render only the cover card with a badge
+    const STATUS_RANK = {hero: 0, accepted: 1, alternate: 2, review: 3, revise: 4, rejected: 5, firing: 6, draft: 7};
+    const stackedItems = [];
+    order.forEach(sid => {
+      const members = grouped[sid];
+      // Cover: hero > accepted > latest
+      const cover = members.reduce((best, m) => {
+        const bRank = STATUS_RANK[best.status] ?? 9;
+        const mRank = STATUS_RANK[m.status] ?? 9;
+        if (mRank < bRank) return m;
+        if (mRank === bRank && (m.first_seen_at || 0) > (best.first_seen_at || 0)) return m;
+        return best;
+      });
+      cover._stack = { count: members.length, members: members, shot_id: sid };
+      // Check if any member needs attention
+      cover._stack.needsAttention = members.some(m => m.status === 'review' || m.status === 'revise');
+      stackedItems.push(cover);
+    });
+    // Append ungrouped cards as-is
+    ungrouped.forEach(item => stackedItems.push(item));
+    // Replace items for rendering
+    state._renderItems = stackedItems;
+  } else {
+    state._renderItems = state.items;
+  }
+
   const grid = (!append && root.querySelector('.grid')) || (() => {
     const g = document.createElement('div');
     g.className = 'grid';
@@ -1540,7 +1621,7 @@ function renderGrid(append = false) {
   })();
   if (!append) grid.innerHTML = '';
   const startIdx = append ? grid.children.length : 0;
-  state.items.slice(startIdx).forEach((a, i) => grid.appendChild(cardEl(a, startIdx + i)));
+  state._renderItems.slice(startIdx).forEach((a, i) => grid.appendChild(cardEl(a, startIdx + i)));
 }
 
 function renderCanvasHead() {
@@ -2040,6 +2121,50 @@ async function fillDrawer(id) {
       }
     });
   }
+
+  // Version strip — show siblings with same shot_id
+  const versionStrip = document.getElementById('drawer-version-strip');
+  if (versionStrip) {
+    const shotId = asset.shot_id;
+    if (shotId) {
+      const siblings = state.items.filter(a => a.shot_id === shotId && a.id !== asset.id);
+      if (siblings.length > 0) {
+        versionStrip.hidden = false;
+        versionStrip.innerHTML = '<div class="vs-label">Versions of ' + escapeHtml(shotId) + ' <button class="vs-compare-all" id="vs-compare-all">Compare all</button></div>'
+          + '<div class="vs-scroll">'
+          + siblings.map(s => {
+            const st = STATUSES.find(x => x.key === s.status) || STATUSES[0];
+            const isVideo = s.media_type === 'video';
+            return '<div class="vs-card" data-id="' + s.id + '">'
+              + '<img src="' + escapeHtml(s.thumb_url || '') + '" alt="" loading="lazy">'
+              + (isVideo ? '<span class="vs-video-mark">&#9654;</span>' : '')
+              + '<div class="vs-meta">'
+              + '<span class="vs-badge" style="background:' + st.swatch + ';color:' + (st.dark ? '#fff' : '#222') + '">' + st.label + '</span>'
+              + '<span class="vs-model">' + escapeHtml(s.model || '') + (s.pass_num ? ' v' + s.pass_num : '') + '</span>'
+              + '</div></div>';
+          }).join('')
+          + '</div>';
+        // Click sibling to switch drawer to that asset
+        versionStrip.querySelectorAll('.vs-card').forEach(c => {
+          c.addEventListener('click', () => selectAsset(Number(c.dataset.id)));
+        });
+        // Compare all button
+        const cmpBtn = document.getElementById('vs-compare-all');
+        if (cmpBtn) {
+          cmpBtn.addEventListener('click', () => {
+            const allIds = [asset.id, ...siblings.map(s => s.id)];
+            openCompare(allIds);
+          });
+        }
+      } else {
+        versionStrip.hidden = true;
+        versionStrip.innerHTML = '';
+      }
+    } else {
+      versionStrip.hidden = true;
+      versionStrip.innerHTML = '';
+    }
+  }
 }
 
 function metaRow(k, v, mono) {
@@ -2140,7 +2265,7 @@ function buildQuery() {
   if (f.has_prompt) params.set('has_prompt', '1');
   if (f.has_sidecar) params.set('has_sidecar', '1');
   if (f.q) params.set('q', f.q);
-  if (state.latestOnly) params.set('latest_per_shot', '1');
+  if (state.latestOnly && !state.stackVersions) params.set('latest_per_shot', '1');
   params.set('sort', state.sort);
   params.set('limit', state.limit);
   params.set('offset', state.offset);
@@ -3219,11 +3344,11 @@ function navigateLightbox(delta) {
       }
     });
   });
-  // Latest-only toggle — show only newest per shot_id
+  // Stack versions toggle — group assets by shot_id into stacked cover cards
   const chkLatest = $('#chk-latest-only');
   if (chkLatest) {
     chkLatest.addEventListener('change', () => {
-      state.latestOnly = chkLatest.checked;
+      state.stackVersions = chkLatest.checked;
       refresh();
     });
   }
