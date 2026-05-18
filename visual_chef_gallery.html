@@ -1573,8 +1573,10 @@ function renderGrid(append = false) {
     return;
   }
 
-  // If stacking is on, group items by shot_id before rendering
-  if (state.stackVersions && !append) {
+  // If stacking is on, ALWAYS re-group the full items array — even on append.
+  // Appended items may belong to an existing shot_id group, so the whole list
+  // must be re-grouped and the grid re-rendered from scratch.
+  if (state.stackVersions) {
     const grouped = {};
     const ungrouped = [];
     const order = []; // preserve first-seen order of shot_ids
@@ -1587,7 +1589,6 @@ function renderGrid(append = false) {
         ungrouped.push(item);
       }
     });
-    // For stacks, render only the cover card with a badge
     const STATUS_RANK = {hero: 0, accepted: 1, alternate: 2, review: 3, revise: 4, rejected: 5, firing: 6, draft: 7};
     const stackedItems = [];
     order.forEach(sid => {
@@ -1601,14 +1602,19 @@ function renderGrid(append = false) {
         return best;
       });
       cover._stack = { count: members.length, members: members, shot_id: sid };
-      // Check if any member needs attention
       cover._stack.needsAttention = members.some(m => m.status === 'review' || m.status === 'revise');
       stackedItems.push(cover);
     });
-    // Append ungrouped cards as-is
+    // #48: Sort stacks by newest member so new variants pull the stack to top
+    stackedItems.sort((a, b) => {
+      const aNewest = Math.max(...(a._stack?.members || [a]).map(m => m.first_seen_at || 0));
+      const bNewest = Math.max(...(b._stack?.members || [b]).map(m => m.first_seen_at || 0));
+      return bNewest - aNewest;
+    });
     ungrouped.forEach(item => stackedItems.push(item));
-    // Replace items for rendering
     state._renderItems = stackedItems;
+    // Stacking must re-render the full grid (groups may have changed)
+    append = false;
   } else {
     state._renderItems = state.items;
   }
@@ -1633,8 +1639,11 @@ function renderCanvasHead() {
   $('#canvas-eyebrow').textContent = `— ${eyebrow}`;
   const heading = f.status ? STATUSES.find(s => s.key === f.status)?.label || 'Review queue' : 'Review queue';
   $('#canvas-heading').textContent = heading;
+  const visibleCount = state.stackVersions && state._renderItems ? state._renderItems.length : state.items.length;
+  const stackSuffix = state.stackVersions && state._renderItems && state._renderItems.length !== state.items.length
+    ? ` (${state.items.length} cards)` : '';
   $('#canvas-meta').textContent = `${state.total.toLocaleString()} ASSETS`;
-  $('#counter-shown').textContent = state.items.length.toLocaleString();
+  $('#counter-shown').textContent = visibleCount.toLocaleString() + stackSuffix;
   $('#counter-total').textContent = state.totalAssets.toLocaleString();
 }
 
