@@ -2047,6 +2047,16 @@ async function fillDrawer(id) {
         const stem = (asset.filename || 'untitled').replace(/\.[^.]+$/, '');
         const ext = (asset.filename || '').includes('.') ? '.' + asset.filename.split('.').pop() : '.mp4';
         const newName = `${stem}_variant${ext}`;
+        // Fix #44: variant should re-fire from the ORIGINAL source refs that
+        // produced this asset, not from the output itself. Output-as-ref turns
+        // every variant into an i2i transformation of the prior result instead
+        // of a fresh re-generation from the same upstream sources. asset.refs
+        // (sourced from prompts.refs_json by _get_asset) carries the original
+        // image: array. Falls back to file_path only for raw_manual imports
+        // that genuinely have no upstream sources.
+        const sourceRefs = (asset.refs && asset.refs.length)
+          ? asset.refs
+          : (asset.file_path ? [asset.file_path] : []);
         const draftPayload = {
           filename: newName,
           shot_id: asset.shot_id || '',
@@ -2056,7 +2066,7 @@ async function fillDrawer(id) {
           payload: {
             model: asset.model || '',
             prompt: asset.prompt || '',
-            image: asset.file_path ? [asset.file_path] : [],
+            image: sourceRefs,
           },
         };
         const res = await api('/api/draft', {
