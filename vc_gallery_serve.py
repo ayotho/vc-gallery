@@ -1308,6 +1308,28 @@ def _add_review(asset_id: int, payload: dict) -> Optional[dict]:
             "UPDATE assets SET status = ?, last_updated_at = strftime('%s','now') WHERE id = ?",
             (to_status, asset_id),
         )
+
+    # #46: Hero demotion cascade — when promoting to hero, demote any other
+    # hero in the same shot_id to "accepted" so only one hero per shot.
+    if to_status == "hero":
+        shot = conn.execute("SELECT shot_id FROM assets WHERE id = ?", (asset_id,)).fetchone()
+        if shot and shot["shot_id"]:
+            prior_heroes = conn.execute(
+                "SELECT id FROM assets WHERE shot_id = ? AND status = 'hero' AND id != ?",
+                (shot["shot_id"], asset_id),
+            ).fetchall()
+            for ph in prior_heroes:
+                conn.execute(
+                    "UPDATE assets SET status = 'accepted', last_updated_at = strftime('%s','now') WHERE id = ?",
+                    (ph["id"],),
+                )
+                conn.execute(
+                    "INSERT INTO reviews (asset_id, from_status, to_status, note, reviewer) "
+                    "VALUES (?, 'hero', 'accepted', 'Auto-demoted: new hero crowned in shot', ?)",
+                    (ph["id"], payload.get("reviewer", "director")),
+                )
+
+    conn.commit()
     _audit("review.added", {"asset_id": asset_id, "to_status": to_status})
     return _get_asset(asset_id)
 
