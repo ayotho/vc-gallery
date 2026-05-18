@@ -936,6 +936,7 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
       </div>
 
       <div class="counter"><b id="counter-shown">0</b> of <span id="counter-total">0</span></div>
+      <button class="ms-act select-all" id="topbar-select-all" title="Select all visible (Cmd+A)" style="font-size:11.5px;font-weight:500;padding:4px 10px;border-radius:999px;cursor:pointer;border:1px solid var(--hairline);background:var(--canvas);color:var(--ink);">☐ All</button>
     </div>
 
     <div class="topbar-right">
@@ -1052,6 +1053,7 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
         <span class="ms-ico" aria-hidden="true">●</span>
         <span class="ms-count">0 selected</span>
         <span class="ms-actions">
+          <button class="ms-act select-all" id="ms-select-all" title="Select all visible (Cmd+A)">☐ All</button>
           <button class="ms-act accept" data-status="accepted">✓ Accept</button>
           <button class="ms-act hero" data-status="hero">★ Hero</button>
           <button class="ms-act revise" data-status="revise">↻ Revise</button>
@@ -1721,6 +1723,14 @@ function handleCardClick(id, ev) {
   selectAsset(id);
 }
 
+function selectAllVisible() {
+  const items = state._renderItems || state.items;
+  items.forEach(a => state.multiSelection.add(a.id));
+  renderMultiSelectChrome();
+  $$('.card').forEach(c => c.classList.toggle('multi-selected', state.multiSelection.has(Number(c.dataset.id))));
+  syncSelectionToServer();
+}
+
 function clearMultiSelection() {
   if (state.multiSelection.size === 0) return;
   state.multiSelection.clear();
@@ -1736,7 +1746,9 @@ function renderMultiSelectChrome() {
   if (!bar) return;
   if (count > 0) {
     bar.hidden = false;
-    bar.querySelector('.ms-count').textContent = `${count} selected`;
+    const loadedItems = (state._renderItems || state.items).length;
+    const suffix = (state.items.length < state.total) ? ` (of ${loadedItems} loaded)` : '';
+    bar.querySelector('.ms-count').textContent = `${count} selected${suffix}`;
   } else {
     bar.hidden = true;
   }
@@ -2291,6 +2303,7 @@ function buildQuery() {
 let _refreshVersion = 0;
 
 async function refresh() {
+  clearMultiSelection();
   const myVersion = ++_refreshVersion;
   state.offset = 0;
   state.doneLoading = false;
@@ -2862,7 +2875,17 @@ function bindKeyboard() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { lb.strokes.pop(); lbRedraw(); return; }
       return;
     }
-    // Never hijack keys when modifier is held (Cmd+A select-all, Ctrl+F, etc.)
+    // Cmd+A / Ctrl+A → select all visible (only when not in a text field)
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+      const ae = document.activeElement;
+      const inField = ae && (['INPUT', 'TEXTAREA'].includes(ae.tagName) || ae.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        selectAllVisible();
+        return;
+      }
+    }
+    // Never hijack keys when modifier is held (Ctrl+F, etc.)
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const ae = document.activeElement;
     const inField = ae && (
@@ -3321,6 +3344,11 @@ function navigateLightbox(delta) {
   // Multi-select bar's clear button
   const msClear = $('#ms-clear');
   if (msClear) msClear.addEventListener('click', clearMultiSelection);
+  // Select All buttons (bar + topbar)
+  const msSelectAll = $('#ms-select-all');
+  if (msSelectAll) msSelectAll.addEventListener('click', selectAllVisible);
+  const topbarSelectAll = $('#topbar-select-all');
+  if (topbarSelectAll) topbarSelectAll.addEventListener('click', selectAllVisible);
   // Filter breadcrumb — click ✕ to clear one filter, or "Clear all" for all
   $('#filter-breadcrumb').addEventListener('click', (e) => {
     const x = e.target.closest('.fb-x');
@@ -3341,8 +3369,21 @@ function navigateLightbox(delta) {
   $$('#multi-select-bar .ms-act').forEach(btn => {
     btn.addEventListener('click', async () => {
       const status = btn.dataset.status;
-      const ids = Array.from(state.multiSelection);
-      if (!ids.length) return;
+      if (!status) return; // skip non-status buttons (select-all, compare, etc.)
+      const selectedIds = Array.from(state.multiSelection);
+      if (!selectedIds.length) return;
+      // Expand any cover-card IDs to include all stack member IDs
+      const renderItems = state._renderItems || state.items;
+      const expandedIds = new Set();
+      selectedIds.forEach(sid => {
+        const cover = renderItems.find(x => x.id === sid);
+        if (cover && cover._stack && cover._stack.members) {
+          cover._stack.members.forEach(m => expandedIds.add(m.id));
+        } else {
+          expandedIds.add(sid);
+        }
+      });
+      const ids = Array.from(expandedIds);
       try {
         const res = await api('/api/assets/bulk-status', {
           method: 'POST',
