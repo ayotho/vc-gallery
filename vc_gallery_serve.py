@@ -1882,11 +1882,11 @@ def _fire_draft(asset_id: int) -> dict:
     payload.setdefault("workflow", row["workflow"] or "draft.fire")
     payload.setdefault("gallery", str(STATE.folder) if STATE.folder else "")
     payload.setdefault("skip_sidecar", True)
-    # Issue #27 — pass the draft's asset_id so the wrapper mutates the existing
-    # row instead of inserting a duplicate. Without this, draft→fire→success
-    # left a "ghost" row at the .drafts/ path + a "real" row at the gallery
-    # path. With it, ONE row flows through draft → firing → review.
-    payload["asset_id"] = asset_id
+    # Issue #52 — asset_id travels via the wrapper's --asset-id CLI flag, not
+    # inside the payload JSON. The wrapper's strict schema rejects unknown
+    # payload keys; keeping asset_id out of the JSON lets the schema stay
+    # strict (catching typos at the boundary) while still letting the draft
+    # row mutate in place (Issue #27 single-row pattern).
 
     # Write the payload to a temp file the wrapper can read
     import tempfile
@@ -1915,6 +1915,7 @@ def _fire_draft(asset_id: int) -> dict:
             [
                 sys.executable, str(WRAPPER_SCRIPT),
                 "--payload-file", tmp_path,
+                "--asset-id", str(asset_id),
                 "--quiet",
                 "--log-path", str(log_path),
             ],

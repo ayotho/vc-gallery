@@ -345,14 +345,16 @@ def _download(url: str, target: Path) -> bool:
         return False
 
 
-def _write_db_row(payload: dict, target: Path, prompt: str, refs: list[str], job_id: Optional[str] = None) -> bool:
+def _write_db_row(payload: dict, target: Path, prompt: str, refs: list[str], job_id: Optional[str] = None, asset_id: Optional[int] = None) -> bool:
     """Write the asset directly to the gallery DB (no sidecar). Used when
     payload['skip_sidecar'] is true — the dashboard becomes the truth.
 
-    Issue #27 — when `payload['asset_id']` is present (set by the server's
-    _fire_draft path), the row at that id is MUTATED in place rather than
-    inserting a new row. This is what merges the draft and the post-fire
-    asset into ONE logical row instead of the historical two-row split.
+    Issue #27 + #52 — when `asset_id` is provided (server passes it via the
+    `--asset-id` CLI flag in _fire_draft), the row at that id is MUTATED in
+    place rather than inserting a new row. This merges the draft and the
+    post-fire asset into ONE logical row instead of the historical two-row
+    split. asset_id is plumbed via CLI arg (not payload JSON) so the
+    wrapper's strict schema stays strict.
     """
     try:
         if str(_HERE) not in sys.path:
@@ -382,15 +384,10 @@ def _write_db_row(payload: dict, target: Path, prompt: str, refs: list[str], job
             "hf_job_url": hf_url,
             "has_sidecar": False,
         }
-        # asset_id arrives as int or numeric string (JSON). Tolerate both.
-        asset_id_raw = payload.get("asset_id")
-        asset_id_int: Optional[int] = None
-        if asset_id_raw is not None:
-            try:
-                asset_id_int = int(asset_id_raw)
-            except (TypeError, ValueError):
-                asset_id_int = None
-        lib_local.upsert_asset_direct(conn, str(target), metadata, asset_id=asset_id_int)
+        # asset_id arrives via the --asset-id CLI flag (issue #52). When None,
+        # upsert_asset_direct treats it as an insert; when set, it mutates the
+        # existing draft row in place (issue #27 single-row pattern).
+        lib_local.upsert_asset_direct(conn, str(target), metadata, asset_id=asset_id)
         conn.close()
         return True
     except Exception as e:  # noqa: BLE001
@@ -471,7 +468,7 @@ def _write_sidecar(payload: dict, target: Path, prompt: str, refs: list[str], jo
 # Main pipeline
 # ──────────────────────────────────────────────────────────────────
 
-def run(payload: dict, dry_run: bool = False, gallery_root: Optional[str] = None, quiet: bool = False) -> int:
+def run(payload: dict, dry_run: bool = False, gallery_root: Optional[str] = None, quiet: bool = False, asset_id: Optional[int] = None) -> int:
     run_id = uuid.uuid4().hex[:12]
     started_at = time.time()
     client = payload.get("client", "unknown")
@@ -762,7 +759,7 @@ def run(payload: dict, dry_run: bool = False, gallery_root: Optional[str] = None
         # Sidecars are legacy opt-in only — pass `skip_sidecar: false` to re-enable.
         skip_sidecar = bool(payload.get("skip_sidecar", True))
         if skip_sidecar:
-            if not _write_db_row(payload, out_target, payload["prompt"], refs, job_id=job_id):
+            if not _write_db_row(payload, out_target, payload["prompt"], refs, job_id=job_id, asset_id=asset_id):
                 print(f"✓ [{idx + 1}/{pair_count}] {out_filename} | {size_mb}MB | job {job_id}  (✗ db write failed)", file=sys.stderr)
                 emit_out("partial_completed_no_db", size_bytes=size_bytes)
                 if overall_exit == EXIT_OK:
@@ -825,6 +822,16 @@ def main() -> int:
         help="Gallery server URL to notify on fire start/complete (#28). "
              "Set to empty string to disable. Default: $VC_CANVAS_URL or localhost:8770.",
     )
+    ap.add_argument(
+        "--asset-id",
+        type=int,
+        default=None,
+        help="Existing gallery asset row id to mutate in place (Issue #52). "
+             "Set by the vc-gallery server's _fire_draft path so the draft row "
+             "transitions in-place to status=review on success, instead of "
+             "inserting a duplicate row. Omitting this flag (direct CLI use) "
+             "falls through to the historical insert-new-row behavior.",
+    )
     args = ap.parse_args()
 
     if args.payload_file:
@@ -875,7 +882,7 @@ def main() -> int:
     if notify_url and not args.dry_run:
         _notify_server(notify_url, "/api/fires", {
             "pid": os.getpid(),
-            "asset_id": payload.get("asset_id"),
+            "asset_id": args.asset_id,
             "filename": filename,
             "shot_id": payload.get("shot_id"),
             "model": payload.get("model"),
@@ -888,7 +895,13 @@ def main() -> int:
         })
 
     try:
-        exit_code = run(payload, dry_run=args.dry_run, gallery_root=args.gallery_root, quiet=args.quiet)
+        exit_code = run(
+            payload,
+            dry_run=args.dry_run,
+            gallery_root=args.gallery_root,
+            quiet=args.quiet,
+            asset_id=args.asset_id,
+        )
     except Exception as e:  # noqa: BLE001 — top-level guard so we always emit summary + close log
         print(f"✗ unhandled exception: {type(e).__name__}: {e}", file=sys.stderr)
         exit_code = EXIT_OTHER
@@ -952,6 +965,19 @@ def main() -> int:
             log_fp.write(f"# ──────────────────────────────────────────────────\n# exit: {exit_code}\n")
             log_fp.close()
         except Exception:
+            pass
+
+    # ─── Clean up server-spawned /tmp/draft_*.json payload (Issue #52) ───
+    # The vc-gallery server writes a temp payload file via tempfile.mkstemp
+    # with prefix "draft_<id>_". After the wrapper exits, no one else needs
+    # the file, so it accumulates indefinitely. Defensive: only delete files
+    # whose path matches the server's prefix pattern so direct CLI invocations
+    # with hand-written payload files are NEVER touched.
+    pf = getattr(args, "payload_file", None)
+    if pf and "/tmp/draft_" in pf:
+        try:
+            os.unlink(pf)
+        except OSError:
             pass
 
     return exit_code
