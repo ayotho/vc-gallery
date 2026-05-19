@@ -901,6 +901,8 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .vs-meta { padding: 4px 6px; display: flex; align-items: center; gap: 4px; }
 .vs-badge { font-size: 9px; font-weight: 540; padding: 1px 5px; border-radius: var(--r-pill); white-space: nowrap; }
 .vs-model { font-size: 10px; color: #8a877f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drawer-version-strip.vs-drop-target { background: rgba(100,200,100,0.12); border-color: var(--primary); outline: 2px dashed var(--primary); outline-offset: -2px; }
+.vs-drop-placeholder { font-size: 12px; color: #8a877f; padding: 12px 0; text-align: center; font-style: italic; }
 </style>
 </head>
 <body class="drawer-hidden">
@@ -2181,15 +2183,50 @@ async function fillDrawer(id) {
             openCompare(allIds);
           });
         }
+        // Make version strip a drop target for drag-to-inherit
+        attachVersionStripDropHandlers(versionStrip, asset);
       } else {
-        versionStrip.hidden = true;
-        versionStrip.innerHTML = '';
+        // No siblings yet — show placeholder + drop target so you can drag orphans in
+        versionStrip.hidden = false;
+        versionStrip.innerHTML = '<div class="vs-label">Versions of ' + escapeHtml(shotId) + '</div>'
+          + '<div class="vs-drop-placeholder">Drop cards here to add to ' + escapeHtml(shotId) + '</div>';
+        attachVersionStripDropHandlers(versionStrip, asset);
       }
     } else {
       versionStrip.hidden = true;
       versionStrip.innerHTML = '';
     }
   }
+}
+
+function attachVersionStripDropHandlers(versionStrip, asset) {
+  versionStrip.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    versionStrip.classList.add('vs-drop-target');
+  });
+  versionStrip.addEventListener('dragleave', () => {
+    versionStrip.classList.remove('vs-drop-target');
+  });
+  versionStrip.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    versionStrip.classList.remove('vs-drop-target');
+    const draggedId = Number(e.dataTransfer.getData('text/plain'));
+    if (!draggedId || draggedId === asset.id) return;
+    try {
+      await api('/api/assets/' + draggedId + '/inherit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_id: asset.id }),
+      });
+      flashToast('Added to ' + (asset.shot_id || asset.scene || 'stack'));
+      refresh();
+      // Re-open drawer on same asset to refresh the strip
+      selectAsset(asset.id);
+    } catch (err) {
+      flashToast('Drop failed: ' + err.message, 'error');
+    }
+  });
 }
 
 function metaRow(k, v, mono) {

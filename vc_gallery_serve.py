@@ -1353,6 +1353,172 @@ def _add_review(asset_id: int, payload: dict) -> Optional[dict]:
     return _get_asset(asset_id)
 
 
+# ---------------------------------------------------------------------------
+# Backfill from Higgsfield API (#43)
+# ---------------------------------------------------------------------------
+
+_HF_UUID_RE = re.compile(r"hf_([0-9a-fA-F-]{36})\.\w+")
+
+
+def _extract_hf_uuid(row: sqlite3.Row) -> Optional[str]:
+    """Try to find a Higgsfield asset UUID from filename or notes."""
+    # 1. Filename pattern: hf_{uuid}.mp4 or hf_{uuid}.webp
+    m = _HF_UUID_RE.match(row["filename"])
+    if m:
+        return m.group(1)
+
+    # 2. Notes JSON: asset_uuid field
+    notes = row["notes"]
+    if notes:
+        try:
+            parsed = json.loads(notes)
+            if isinstance(parsed, dict):
+                if parsed.get("asset_uuid"):
+                    return parsed["asset_uuid"]
+                # 3. pulled_from URL containing UUID
+                pulled = parsed.get("pulled_from") or ""
+                if "higgsfield.ai" in pulled:
+                    # URL shape: https://higgsfield.ai/asset/all/{uuid}
+                    parts = pulled.rstrip("/").split("/")
+                    candidate = parts[-1] if parts else ""
+                    if len(candidate) >= 32:
+                        return candidate
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # 4. jobs.source_url as last resort
+    conn = STATE.conn()
+    job = conn.execute(
+        "SELECT source_url FROM jobs WHERE asset_id = ?", (row["id"],)
+    ).fetchone()
+    if job and job["source_url"] and "higgsfield.ai" in job["source_url"]:
+        parts = job["source_url"].rstrip("/").split("/")
+        candidate = parts[-1] if parts else ""
+        if len(candidate) >= 32:
+            return candidate
+
+    return None
+
+
+def _backfill_hf(asset_id: int) -> dict:
+    """Pull metadata from the Higgsfield API and backfill prompt + model fields."""
+    conn = STATE.conn()
+    row = conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    if row is None:
+        return {"ok": False, "error": "asset not found"}
+
+    hf_uuid = _extract_hf_uuid(row)
+    if not hf_uuid:
+        return {"ok": False, "error": "No Higgsfield UUID found in filename or notes"}
+
+    # Hit the Higgsfield API
+    api_url = f"https://api.higgsfield.ai/v1/assets/{hf_uuid}"
+    headers = {"Accept": "application/json"}
+    api_key = os.environ.get("HIGGSFIELD_API_KEY", "")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        from urllib.request import Request, urlopen
+        from urllib.error import HTTPError, URLError
+        req = Request(api_url, headers=headers, method="GET")
+        with urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:500]
+        except Exception:
+            pass
+        return {"ok": False, "error": f"Higgsfield API {e.code}: {e.reason}", "detail": body, "uuid": hf_uuid}
+    except URLError as e:
+        return {"ok": False, "error": f"Higgsfield API network error: {e.reason}", "uuid": hf_uuid}
+    except Exception as e:
+        return {"ok": False, "error": f"Higgsfield API error: {e}", "uuid": hf_uuid}
+
+    # Extract fields from response
+    prompt_text = data.get("prompt") or data.get("input", {}).get("prompt") or ""
+    ref_urls = []
+    # Try multiple response shapes for reference images
+    for key in ("reference_images", "references", "input_images", "medias"):
+        refs = data.get(key)
+        if isinstance(refs, list):
+            for r in refs:
+                if isinstance(r, str):
+                    ref_urls.append(r)
+                elif isinstance(r, dict):
+                    ref_urls.append(r.get("url") or r.get("value") or "")
+            if ref_urls:
+                break
+    # Also check nested input dict
+    if not ref_urls:
+        inp = data.get("input", {})
+        if isinstance(inp, dict):
+            for key in ("reference_images", "references", "medias"):
+                refs = inp.get(key)
+                if isinstance(refs, list):
+                    for r in refs:
+                        if isinstance(r, str):
+                            ref_urls.append(r)
+                        elif isinstance(r, dict):
+                            ref_urls.append(r.get("url") or r.get("value") or "")
+                    if ref_urls:
+                        break
+    ref_urls = [u for u in ref_urls if u]  # drop empties
+
+    hf_model = data.get("model") or data.get("model_id") or ""
+    aspect_ratio = data.get("aspect_ratio") or ""
+
+    # Upsert into prompts table
+    conn.execute(
+        """INSERT INTO prompts (asset_id, prompt_text, refs_json)
+           VALUES (?, ?, ?)
+           ON CONFLICT(asset_id) DO UPDATE SET
+               prompt_text = CASE WHEN excluded.prompt_text != '' THEN excluded.prompt_text ELSE prompts.prompt_text END,
+               refs_json = CASE WHEN excluded.refs_json != '[]' THEN excluded.refs_json ELSE prompts.refs_json END""",
+        (asset_id, prompt_text, json.dumps(ref_urls, ensure_ascii=False)),
+    )
+
+    # Update asset model/workflow if currently empty
+    updates = []
+    params = []
+    if hf_model and not row["model"]:
+        updates.append("model = ?")
+        params.append(hf_model)
+    workflow_val = f"higgsfield"
+    if aspect_ratio:
+        workflow_val = f"higgsfield.{aspect_ratio}"
+    if not row["workflow"]:
+        updates.append("workflow = ?")
+        params.append(workflow_val)
+    if updates:
+        updates.append("last_updated_at = strftime('%s','now')")
+        params.append(asset_id)
+        conn.execute(
+            f"UPDATE assets SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+
+    # Log review
+    conn.execute(
+        "INSERT INTO reviews (asset_id, from_status, to_status, note, reviewer) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (asset_id, row["status"], row["status"],
+         f"Backfilled from Higgsfield UUID {hf_uuid}", "system"),
+    )
+    conn.commit()
+
+    _audit("asset.backfill_hf", {
+        "asset_id": asset_id,
+        "uuid": hf_uuid,
+        "prompt_len": len(prompt_text),
+        "ref_count": len(ref_urls),
+        "model": hf_model,
+    })
+    STATE.mark_changed()
+    return {"ok": True, "asset": _get_asset(asset_id), "hf_uuid": hf_uuid, "hf_response": data}
+
+
 def _bulk_status_change(payload: dict) -> dict:
     """Change status on multiple assets in one call.
     Body: {asset_ids: [1,2,3], status: "hero", note: "...", reviewer: "director"}
@@ -1880,6 +2046,8 @@ def _fire_draft(asset_id: int) -> dict:
     payload.setdefault("client", row["client"] or "unknown")
     payload.setdefault("project", row["project"] or "unknown")
     payload.setdefault("workflow", row["workflow"] or "draft.fire")
+    payload.setdefault("shot_id", row["shot_id"] or "")
+    payload.setdefault("scene", row["scene"] or "")
     payload.setdefault("gallery", str(STATE.folder) if STATE.folder else "")
     payload.setdefault("skip_sidecar", True)
     # Issue #27 — pass the draft's asset_id so the wrapper mutates the existing
@@ -1887,6 +2055,9 @@ def _fire_draft(asset_id: int) -> dict:
     # left a "ghost" row at the .drafts/ path + a "real" row at the gallery
     # path. With it, ONE row flows through draft → firing → review.
     payload["asset_id"] = asset_id
+
+    # Strip fields the wrapper schema doesn't accept
+    payload.pop("asset_id", None)
 
     # Write the payload to a temp file the wrapper can read
     import tempfile
@@ -2551,6 +2722,17 @@ class Handler(BaseHTTPRequestHandler):
             _audit("fire.completed_external", {"pid": pid, "asset_id": asset_id, "exit_code": exit_code})
             STATE.mark_changed()
             self._send_json(200, {"ok": True, "pid": pid, "exit_code": exit_code})
+            return
+
+        # POST /api/assets/<id>/backfill-hf — pull metadata from Higgsfield API
+        m = re.match(r"^/api/assets/(\d+)/backfill-hf$", path)
+        if m:
+            if STATE.folder is None:
+                self._send_error_json(409, "no working folder set")
+                return
+            result = _backfill_hf(int(m.group(1)))
+            status = 200 if result.get("ok") else (404 if "not found" in result.get("error", "") else 400)
+            self._send_json(status, result)
             return
 
         # POST /api/debug/orphans/purge — delete all rows whose file is gone
