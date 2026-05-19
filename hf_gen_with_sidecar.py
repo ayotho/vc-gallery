@@ -362,6 +362,26 @@ def _write_db_row(payload: dict, target: Path, prompt: str, refs: list[str], job
         import vc_gallery_lib as lib_local
         db_path = lib_local.db_path_for(payload["gallery"])
         conn = lib_local.connect(db_path)
+
+        # Red-team F2: guard against wrong --asset-id silently corrupting an
+        # unrelated draft row. If the target id exists but its filename
+        # doesn't match the payload's filename, refuse to mutate. This
+        # catches: stale copy-paste asset_ids during direct CLI use, agent
+        # tracking a different draft, server bug passing the wrong id.
+        if asset_id is not None:
+            existing = conn.execute(
+                "SELECT filename FROM assets WHERE id = ?", (asset_id,)
+            ).fetchone()
+            if existing is not None and existing[0] != payload.get("filename"):
+                print(
+                    f"✗ refusing to mutate asset_id={asset_id} "
+                    f"(filename mismatch: row has {existing[0]!r}, "
+                    f"payload has {payload.get('filename')!r})",
+                    file=sys.stderr,
+                )
+                conn.close()
+                return False
+
         hf_url = f"https://higgsfield.ai/asset/all/{job_id}" if job_id else ""
         metadata = {
             "status": payload.get("status", "review"),
@@ -967,14 +987,19 @@ def main() -> int:
         except Exception:
             pass
 
-    # ─── Clean up server-spawned /tmp/draft_*.json payload (Issue #52) ───
+    # ─── Clean up server-spawned draft_*.json payload (Issue #52) ───
     # The vc-gallery server writes a temp payload file via tempfile.mkstemp
-    # with prefix "draft_<id>_". After the wrapper exits, no one else needs
-    # the file, so it accumulates indefinitely. Defensive: only delete files
-    # whose path matches the server's prefix pattern so direct CLI invocations
-    # with hand-written payload files are NEVER touched.
+    # with prefix "draft_<id>_" and suffix ".json". After the wrapper exits,
+    # no one else needs the file, so it accumulates indefinitely. Defensive:
+    # match on BASENAME (not full path) so the check works across platforms —
+    # Linux drops files in /tmp, macOS in /var/folders/<hash>/T/, Windows in
+    # %TEMP%. A substring on "/tmp/draft_" silently skipped cleanup on macOS
+    # (red-team F1). Direct CLI invocations with hand-written payload files
+    # whose basename doesn't match `draft_*.json` are NEVER touched. Basename
+    # match also blocks path-traversal nuisance (e.g. /tmp/draft_X/payload.json
+    # — basename is "payload.json", check skips correctly).
     pf = getattr(args, "payload_file", None)
-    if pf and "/tmp/draft_" in pf:
+    if pf and os.path.basename(pf).startswith("draft_") and pf.endswith(".json"):
         try:
             os.unlink(pf)
         except OSError:
