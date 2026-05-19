@@ -282,6 +282,7 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 /* Drag-to-inherit */
 .card.dragging { opacity: 0.4; }
 .card.drop-target { outline: 2px solid var(--primary); outline-offset: -2px; box-shadow: 0 0 12px rgba(100,200,100,0.3); }
+.drawer-version-strip.drop-target { outline: 2px dashed var(--primary); outline-offset: -4px; background: rgba(100,200,100,0.08); }
 
 /* Stacked cards — shadow depth effect showing multiple versions behind the cover */
 .card.stacked { position: relative; }
@@ -2181,6 +2182,45 @@ async function fillDrawer(id) {
             openCompare(allIds);
           });
         }
+        // Drag-to-stack: drop an orphan card onto the strip → orphan inherits
+        // drawer asset's shot_id + scene. Lets director batch-stack orphans
+        // without dragging them ten screens to find the parent card.
+        versionStrip.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+          versionStrip.classList.add('drop-target');
+        });
+        versionStrip.addEventListener('dragleave', (e) => {
+          // Only clear the outline when leaving the strip itself, not when
+          // moving onto a child element.
+          if (e.target === versionStrip) versionStrip.classList.remove('drop-target');
+        });
+        versionStrip.addEventListener('drop', async (e) => {
+          e.preventDefault();
+          versionStrip.classList.remove('drop-target');
+          const draggedId = Number(e.dataTransfer.getData('text/plain'));
+          if (!draggedId) return;
+          if (draggedId === asset.id) {
+            flashToast("Can't stack onto self");
+            return;
+          }
+          if (!asset.shot_id) {
+            flashToast('Drawer asset has no shot_id to stack into');
+            return;
+          }
+          try {
+            await api('/api/assets/' + draggedId + '/inherit', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ source_id: asset.id }),
+            });
+            flashToast('Stacked into ' + asset.shot_id);
+            refresh();
+            // Drawer stays open — director can batch more orphans into the same stack.
+          } catch (err) {
+            flashToast('Stack failed: ' + err.message, 'error');
+          }
+        });
       } else {
         versionStrip.hidden = true;
         versionStrip.innerHTML = '';

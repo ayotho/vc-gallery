@@ -243,6 +243,121 @@ def test_cards_are_draggable(page):
     assert cards.first.get_attribute("draggable") == "true"
 
 
+def test_drawer_strip_is_drop_target(page):
+    """Drop an orphan onto the drawer version strip → inherit POST fires.
+
+    Setup: open the drawer on a stacked card (so the version strip shows).
+    Pick a different card (the "orphan") and dispatch a synthetic HTML5
+    drag → drop onto #drawer-version-strip. Assert that POST
+    /api/assets/<orphan_id>/inherit was called with the drawer asset's id.
+    """
+    stacked = page.locator(".card.stacked")
+    if stacked.count() == 0:
+        pytest.skip("No stacked cards available to drop onto")
+    cards = page.locator(".card")
+    if cards.count() < 2:
+        pytest.skip("Need at least 2 cards for drag→drop test")
+
+    # Open drawer on a stacked card
+    stacked.first.click()
+    page.wait_for_timeout(500)
+    strip = page.locator("#drawer-version-strip")
+    if strip.is_hidden():
+        pytest.skip("Drawer version strip is hidden (no siblings for this stack)")
+
+    # Find an orphan card whose id differs from the drawer's selected id.
+    # Must read from rendered DOM (not state.items) because stacking collapses
+    # siblings out of the grid — those ids exist in state but have no card.
+    drawer_id = page.evaluate("() => state.selectedId")
+    assert drawer_id, "drawer should have a selectedId after click"
+    orphan_id = page.evaluate(
+        """(did) => {
+          const ids = Array.from(document.querySelectorAll('.card'))
+            .map(c => Number(c.dataset.id))
+            .filter(id => id !== did);
+          return ids[0] || null;
+        }""",
+        drawer_id,
+    )
+    if not orphan_id:
+        pytest.skip("Could not find a rendered orphan card distinct from drawer asset")
+
+    # Intercept the inherit POST so we can assert it fired with the right body.
+    captured = {}
+
+    def on_request(req):
+        if req.method == "POST" and "/inherit" in req.url:
+            captured["url"] = req.url
+            captured["body"] = req.post_data
+
+    page.on("request", on_request)
+
+    # Dispatch a synthetic HTML5 drag from the orphan card → drop on the strip.
+    # We construct a DataTransfer in-page and dispatch dragstart on the source,
+    # then dragover + drop on the strip — mirrors how the browser delivers
+    # native drag events.
+    fired = page.evaluate(
+        """([draggedId]) => {
+          const src = document.querySelector('.card[data-id="' + draggedId + '"]');
+          const strip = document.getElementById('drawer-version-strip');
+          if (!src || !strip) return { ok: false, reason: 'missing elements' };
+          const dt = new DataTransfer();
+          dt.setData('text/plain', String(draggedId));
+          src.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }));
+          strip.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true }));
+          strip.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+          return { ok: true };
+        }""",
+        [orphan_id],
+    )
+    assert fired.get("ok"), f"drag simulation failed: {fired}"
+
+    # Give the async POST a moment to fire
+    page.wait_for_timeout(800)
+    assert "url" in captured, "expected POST /api/assets/<id>/inherit to fire"
+    assert f"/api/assets/{orphan_id}/inherit" in captured["url"]
+    assert captured["body"] and str(drawer_id) in captured["body"]
+
+
+def test_drawer_strip_drop_self_is_noop(page):
+    """Dropping the drawer asset onto its own version strip is a no-op.
+
+    Should NOT fire an inherit POST; should flash a toast instead.
+    """
+    stacked = page.locator(".card.stacked")
+    if stacked.count() == 0:
+        pytest.skip("No stacked cards available")
+    stacked.first.click()
+    page.wait_for_timeout(500)
+    strip = page.locator("#drawer-version-strip")
+    if strip.is_hidden():
+        pytest.skip("Drawer version strip is hidden")
+
+    drawer_id = page.evaluate("() => state.selectedId")
+    assert drawer_id
+
+    posted = []
+
+    def on_request(req):
+        if req.method == "POST" and "/inherit" in req.url:
+            posted.append(req.url)
+
+    page.on("request", on_request)
+
+    page.evaluate(
+        """([draggedId]) => {
+          const strip = document.getElementById('drawer-version-strip');
+          const dt = new DataTransfer();
+          dt.setData('text/plain', String(draggedId));
+          strip.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true }));
+          strip.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+        }""",
+        [drawer_id],
+    )
+    page.wait_for_timeout(500)
+    assert not posted, f"self-drop must NOT fire inherit, but got: {posted}"
+
+
 # ── Status filters ───────────────────────────────────────────────────
 
 def test_status_filter_works(page):
