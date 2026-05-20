@@ -747,9 +747,11 @@ def _row_to_asset(row: sqlite3.Row, thumb_dir: Path) -> dict:
             # code can read asset.refs_resolved uniformly (drafts + fired gens).
             asset["refs_resolved"] = image_refs_resolved
             asset["refs"] = image_refs
-            # Hide the raw JSON string from clients — the structured `draft` block
-            # has everything, and director-facing `notes` should be empty for drafts.
-            asset["notes"] = ""
+            # Surface user-facing notes from the JSON blob's user_notes field
+            # (set by the PATCH path). Director's drawer reads asset.notes —
+            # keeping the field on the client side uniform across drafts and
+            # fired gens. 2026-05-21 fix.
+            asset["notes"] = note_data.get("user_notes", "") or ""
 
     return asset
 
@@ -1263,6 +1265,22 @@ def _patch_asset(asset_id: int, payload: dict) -> Optional[dict]:
             v = lib.normalize_status(v)
             if v not in lib.VALID_STATUSES:
                 continue
+        # 2026-05-21 fix: on drafts, the `notes` column is a JSON blob carrying
+        # the draft payload + image_refs. A plain PATCH `{notes: "..."}` would
+        # clobber that blob and destroy the draft (the drawer's auto-save was
+        # doing exactly this — director reported 2026-05-21 with screenshot).
+        # Route user-facing notes through note_data["user_notes"] instead so
+        # the blob is merged in place. _row_to_asset reads this back into
+        # asset["notes"] so the UI sees the same string it saved.
+        if k == "notes" and row["status"] == "draft":
+            try:
+                note_data = json.loads(row["notes"]) if row["notes"] else {}
+                if not isinstance(note_data, dict):
+                    note_data = {}
+            except (json.JSONDecodeError, TypeError):
+                note_data = {}
+            note_data["user_notes"] = v or ""
+            v = json.dumps(note_data, ensure_ascii=False)
         sets.append(f"{k} = ?")
         values.append(v)
         changes[k] = v
