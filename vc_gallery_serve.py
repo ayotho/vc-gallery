@@ -2423,6 +2423,65 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {**counts, "current": str(STATE.folder)})
             return
 
+        if path == "/api/import-hf":
+            # Import an existing Higgsfield asset into the gallery DB via its
+            # asset URL or job UUID. Wraps hf_import.import_hf_asset; maps
+            # ImportError_.code → HTTP status. Director uses this from the
+            # dashboard's Import HF button.
+            if STATE.folder is None:
+                self._send_error_json(409, "no working folder set")
+                return
+            payload = self._read_json_body()
+            url = (payload.get("url") or payload.get("url_or_id") or "").strip()
+            if not url:
+                self._send_error_json(400, "missing 'url'")
+                return
+            try:
+                from hf_import import import_hf_asset, ImportError_
+            except ImportError as e:  # noqa: F841
+                self._send_error_json(500, f"hf_import module not available: {e}")
+                return
+            try:
+                result = import_hf_asset(
+                    url_or_id=url,
+                    gallery=str(STATE.folder),
+                    client=(payload.get("client") or "").strip(),
+                    project=(payload.get("project") or "").strip(),
+                    shot_id=(payload.get("shot_id") or "").strip(),
+                    scene=(payload.get("scene") or "").strip(),
+                    workflow=(payload.get("workflow") or "").strip(),
+                    filename=(payload.get("filename") or "").strip(),
+                    notes=(payload.get("notes") or "").strip(),
+                    status=(payload.get("status") or "review").strip(),
+                    variant=(payload.get("variant") or "").strip(),
+                    pass_num=int(payload.get("pass_num") or 1),
+                    force=bool(payload.get("force") or False),
+                )
+            except ImportError_ as e:
+                code_to_status = {
+                    "bad_url": 400, "not_completed": 422, "no_result_url": 422,
+                    "collision": 409, "no_gallery": 409,
+                    "hf_cli": 502, "download_failed": 502, "db_failed": 500,
+                }
+                http = code_to_status.get(e.code, 400)
+                _audit("import_hf.failed", {"code": e.code, "url": url})
+                self._send_json(http, {"ok": False, "error": e.code, "message": e.message})
+                return
+            except Exception as e:  # noqa: BLE001
+                _audit("import_hf.unexpected", {"error": str(e), "url": url})
+                self._send_error_json(500, f"unexpected: {type(e).__name__}: {e}")
+                return
+
+            STATE.mark_changed()
+            _audit("import_hf.ok", {
+                "asset_id": result["asset_id"],
+                "filename": result["filename"],
+                "model": result["model"],
+                "hf_job_id": result["hf_job_id"],
+            })
+            self._send_json(200, {"ok": True, "asset": result})
+            return
+
         m = re.match(r"^/api/assets/(\d+)/reviews$", path)
         if m:
             if STATE.folder is None:

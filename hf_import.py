@@ -171,6 +171,148 @@ def collect_refs(params: dict) -> list[str]:
     return refs
 
 
+class ImportError_(Exception):
+    """Structured failure with a stable error code for the API layer."""
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def import_hf_asset(
+    *,
+    url_or_id: str,
+    gallery: Optional[str] = None,
+    client: str = "",
+    project: str = "",
+    shot_id: str = "",
+    scene: str = "",
+    workflow: str = "",
+    filename: str = "",
+    notes: str = "",
+    status: str = "review",
+    variant: str = "",
+    pass_num: int = 1,
+    force: bool = False,
+    server_url: str = "http://127.0.0.1:8770",
+) -> dict:
+    """Import an HF asset into the gallery DB. Returns a structured dict
+    {ok, asset_id, op, filename, file_path, model, size_bytes, width, height,
+     duration_sec, hf_job_id, hf_job_url}. Raises ImportError_ on failure with
+     a stable .code so the API layer can map to HTTP status.
+
+    `client` and `project` are optional here (default empty) so the UI can omit
+    them for ad-hoc imports — the CLI's main() still requires them via argparse.
+    """
+    # 1. Extract job_id
+    job_id = extract_job_id(url_or_id)
+    if not job_id:
+        raise ImportError_("bad_url", f"couldn't extract a UUID from: {url_or_id}")
+
+    # 2. Fetch job metadata
+    try:
+        job = hf_get_job(job_id)
+    except RuntimeError as e:
+        raise ImportError_("hf_cli", str(e)) from e
+
+    job_status = job.get("status")
+    if job_status != "completed":
+        raise ImportError_("not_completed", f"job {job_id} status={job_status!r} — only 'completed' jobs can be imported")
+
+    result_url = job.get("result_url")
+    if not result_url:
+        raise ImportError_("no_result_url", f"job {job_id} has no result_url")
+
+    model = job.get("job_set_type", "unknown")
+    params = job.get("params") or {}
+    prompt = params.get("prompt") or ""
+    workflow_final = workflow or detect_workflow(params, model)
+    refs = collect_refs(params)
+
+    # 3. Resolve gallery folder
+    gallery_str = gallery or gallery_from_server(server_url)
+    if not gallery_str:
+        raise ImportError_("no_gallery", "no gallery folder — pass gallery or start the gallery server")
+    gallery_path = Path(gallery_str).resolve()
+    if not gallery_path.exists() or not gallery_path.is_dir():
+        raise ImportError_("no_gallery", f"gallery folder does not exist: {gallery_path}")
+
+    # 4. Determine filename + check collision
+    target_filename = filename or derive_filename(result_url, shot_id, model)
+    target = gallery_path / target_filename
+    if target.exists() and not force:
+        raise ImportError_("collision", f"destination exists: {target} — pass force=true to overwrite")
+
+    # 5. Download
+    try:
+        size = download_to(result_url, target)
+    except RuntimeError as e:
+        raise ImportError_("download_failed", str(e)) from e
+
+    # 6. ffprobe (videos + images both OK)
+    dims = ffprobe_dims(target)
+
+    # 7. Write DB row
+    metadata = {
+        "status": status,
+        "source_type": "generated",
+        "model": model,
+        "workflow": workflow_final,
+        "pass_num": pass_num,
+        "variant": variant,
+        "client": client,
+        "project": project,
+        "shot_id": shot_id,
+        "scene": scene,
+        "notes": notes,
+        "prompt_text": prompt,
+        "refs": refs,
+        "hf_job_id": job_id,
+        "hf_job_url": f"https://higgsfield.ai/asset/all/{job_id}",
+        "has_sidecar": False,
+        "width": dims["width"],
+        "height": dims["height"],
+        "duration_sec": dims["duration_sec"],
+    }
+
+    try:
+        db_path = lib.db_path_for(str(gallery_path))
+        conn = lib.connect(db_path)
+        asset_id, op = lib.upsert_asset_direct(conn, str(target), metadata)
+        conn.close()
+    except Exception as e:  # noqa: BLE001
+        raise ImportError_("db_failed", f"{type(e).__name__}: {e}") from e
+
+    return {
+        "ok": True,
+        "asset_id": asset_id,
+        "op": op,
+        "filename": target_filename,
+        "file_path": str(target),
+        "model": model,
+        "workflow": workflow_final,
+        "size_bytes": size,
+        "width": dims["width"],
+        "height": dims["height"],
+        "duration_sec": dims["duration_sec"],
+        "hf_job_id": job_id,
+        "hf_job_url": f"https://higgsfield.ai/asset/all/{job_id}",
+    }
+
+
+# Map ImportError_ codes to CLI exit codes (kept stable for scripts)
+_EXIT_CODE_MAP = {
+    "bad_url": 2,
+    "hf_cli": 3,
+    "not_completed": 4,
+    "no_result_url": 4,
+    "no_gallery": 5,
+    "collision": 6,
+    "download_failed": 7,
+    "db_failed": 8,
+}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("url_or_id", help="Higgsfield asset URL or job UUID")
@@ -189,99 +331,32 @@ def main() -> int:
     ap.add_argument("--server-url", default="http://127.0.0.1:8770", help="Gallery server URL for /api/folder lookup")
     args = ap.parse_args()
 
-    # 1. Extract job_id
-    job_id = extract_job_id(args.url_or_id)
-    if not job_id:
-        print(f"✗ couldn't extract a UUID from: {args.url_or_id}", file=sys.stderr)
-        return 2
-
-    # 2. Fetch job metadata
     try:
-        job = hf_get_job(job_id)
-    except RuntimeError as e:
-        print(f"✗ {e}", file=sys.stderr)
-        return 3
+        result = import_hf_asset(
+            url_or_id=args.url_or_id,
+            gallery=args.gallery or None,
+            client=args.client,
+            project=args.project,
+            shot_id=args.shot_id,
+            scene=args.scene,
+            workflow=args.workflow,
+            filename=args.filename,
+            notes=args.notes,
+            status=args.status,
+            variant=args.variant,
+            pass_num=args.pass_num,
+            force=args.force,
+            server_url=args.server_url,
+        )
+    except ImportError_ as e:
+        print(f"✗ {e.message}", file=sys.stderr)
+        return _EXIT_CODE_MAP.get(e.code, 1)
 
-    status = job.get("status")
-    if status != "completed":
-        print(f"✗ job {job_id} status={status!r} — only 'completed' jobs can be imported", file=sys.stderr)
-        return 4
-
-    result_url = job.get("result_url")
-    if not result_url:
-        print(f"✗ job {job_id} has no result_url", file=sys.stderr)
-        return 4
-
-    model = job.get("job_set_type", "unknown")
-    params = job.get("params") or {}
-    prompt = params.get("prompt") or ""
-    workflow = args.workflow or detect_workflow(params, model)
-    refs = collect_refs(params)
-
-    # 3. Resolve gallery folder
-    gallery_str = args.gallery or gallery_from_server(args.server_url)
-    if not gallery_str:
-        print(f"✗ no gallery folder — pass --gallery or start the gallery server", file=sys.stderr)
-        return 5
-    gallery = Path(gallery_str).resolve()
-    if not gallery.exists() or not gallery.is_dir():
-        print(f"✗ gallery folder does not exist: {gallery}", file=sys.stderr)
-        return 5
-
-    # 4. Determine filename + check collision
-    filename = args.filename or derive_filename(result_url, args.shot_id, model)
-    target = gallery / filename
-    if target.exists() and not args.force:
-        print(f"✗ destination exists: {target} — pass --force to overwrite", file=sys.stderr)
-        return 6
-
-    # 5. Download
-    try:
-        size = download_to(result_url, target)
-    except RuntimeError as e:
-        print(f"✗ {e}", file=sys.stderr)
-        return 7
-
-    # 6. ffprobe (videos + images both OK)
-    dims = ffprobe_dims(target)
-
-    # 7. Write DB row
-    metadata = {
-        "status": args.status,
-        "source_type": "generated",
-        "model": model,
-        "workflow": workflow,
-        "pass_num": args.pass_num,
-        "variant": args.variant,
-        "client": args.client,
-        "project": args.project,
-        "shot_id": args.shot_id,
-        "scene": args.scene,
-        "notes": args.notes,
-        "prompt_text": prompt,
-        "refs": refs,
-        "hf_job_id": job_id,
-        "hf_job_url": f"https://higgsfield.ai/asset/all/{job_id}",
-        "has_sidecar": False,
-        "width": dims["width"],
-        "height": dims["height"],
-        "duration_sec": dims["duration_sec"],
-    }
-
-    try:
-        db_path = lib.db_path_for(str(gallery))
-        conn = lib.connect(db_path)
-        asset_id, op = lib.upsert_asset_direct(conn, str(target), metadata)
-        conn.close()
-    except Exception as e:  # noqa: BLE001
-        print(f"✗ DB write failed: {type(e).__name__}: {e}", file=sys.stderr)
-        return 8
-
-    mb = size / (1024 * 1024)
-    dur_str = f"{dims['duration_sec']:.1f}s" if dims.get("duration_sec") else "?"
-    res_str = f"{dims.get('width')}x{dims.get('height')}" if dims.get("width") else "?"
+    mb = result["size_bytes"] / (1024 * 1024)
+    dur_str = f"{result['duration_sec']:.1f}s" if result.get("duration_sec") else "?"
+    res_str = f"{result.get('width')}x{result.get('height')}" if result.get("width") else "?"
     print(
-        f"✓ #{asset_id} {op} | {filename} | {model} | {mb:.2f}MB | {res_str} | {dur_str}"
+        f"✓ #{result['asset_id']} {result['op']} | {result['filename']} | {result['model']} | {mb:.2f}MB | {res_str} | {dur_str}"
     )
     return 0
 
