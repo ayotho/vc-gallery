@@ -727,13 +727,26 @@ def _row_to_asset(row: sqlite3.Row, thumb_dir: Path) -> dict:
         except (json.JSONDecodeError, TypeError):
             note_data = {}
         if isinstance(note_data, dict) and note_data.get("is_draft"):
+            image_refs = note_data.get("image_refs", []) or []
+            # Resolve ref paths to {url, filename, exists} so the card render
+            # can use the FIRST ref as a thumbnail. Cheap — drafts are a small
+            # subset and we already iterate the notes dict for the payload.
+            try:
+                image_refs_resolved = [_resolve_ref_to_url(r, STATE.folder) for r in image_refs]
+            except Exception:  # noqa: BLE001 — STATE.folder may be None during boot
+                image_refs_resolved = []
             asset["draft"] = {
                 "payload": note_data.get("payload", {}),
-                "image_refs": note_data.get("image_refs", []),
+                "image_refs": image_refs,
+                "image_refs_resolved": image_refs_resolved,
                 "estimated_cost": note_data.get("estimated_cost"),
                 "staged_at": note_data.get("staged_at"),
                 "last_edited_at": note_data.get("last_edited_at"),
             }
+            # Mirror the resolved refs to the top-level field so client card
+            # code can read asset.refs_resolved uniformly (drafts + fired gens).
+            asset["refs_resolved"] = image_refs_resolved
+            asset["refs"] = image_refs
             # Hide the raw JSON string from clients — the structured `draft` block
             # has everything, and director-facing `notes` should be empty for drafts.
             asset["notes"] = ""

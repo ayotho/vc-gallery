@@ -382,33 +382,62 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .thumb { position: relative; display: block; }
 .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .thumb .frame { position: absolute; inset: 0; background-size: cover; background-position: center; background-color: #1a1a1d; }
-/* Issue #26 — draft thumbnails show a text-preview of the prompt instead of a
-   black tile. Subtle off-canvas background so the eye registers "this is a draft
-   preview" rather than "this is broken media". Status-gated — only renders for
-   asset.status === 'draft' || 'firing'. */
+/* Draft card visual treatment (2026-05-20 redesign).
+   Director feedback: text walls were unscannable. New treatment uses the
+   FIRST ref image as the thumbnail, dashes the card border so drafts read
+   as "wireframe / not built yet", and shows model + first prompt snippet
+   in a small caption strip overlaid on the bottom of the thumb. Multi-ref
+   surfaced via a small count badge bottom-right. */
+.card.draft-card { border: 1.5px dashed #b7b3a9; background: var(--surface-soft); }
+.card.draft-card:hover { border-color: var(--ink); }
+
 .thumb-draft-preview {
   position: absolute; inset: 0;
   display: flex; flex-direction: column; gap: 6px;
-  padding: 36px 14px 12px;  /* top space lets the status badge breathe */
+  padding: 36px 14px 12px;
   background: var(--surface-soft);
   color: var(--ink);
   overflow: hidden;
 }
-.thumb-draft-preview .dp-meta {
-  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.4px;
-  text-transform: uppercase; color: #6f6c64;
+.thumb-draft-preview .dp-prompt-empty {
+  font-size: 12.5px; color: #8a877f; font-style: italic; text-align: center; margin: auto 0;
+}
+.thumb-draft-ref {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block; background: #1a1a1d;
+}
+.thumb-draft-caption {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 12px 10px;
+  background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.62) 60%, rgba(0,0,0,0.82) 100%);
+  color: #fff; font-size: 11.5px; line-height: 1.35;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.thumb-draft-caption .tdc-model {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px;
+  text-transform: uppercase; color: rgba(255,255,255,0.78); font-weight: 500;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.thumb-draft-preview .dp-prompt {
-  font-size: 12.5px; line-height: 1.42; color: #2a2825;
-  flex: 1; min-height: 0; overflow: hidden;
-  display: -webkit-box; -webkit-line-clamp: 7; -webkit-box-orient: vertical;
-  word-break: break-word;
+.thumb-draft-caption .tdc-prompt {
+  color: rgba(255,255,255,0.96); font-weight: 460;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word;
 }
-.thumb-draft-preview .dp-prompt.empty { color: #8a877f; font-style: italic; }
-.thumb-draft-preview .dp-refs {
-  font-family: var(--mono); font-size: 10.5px; color: #6f6c64; letter-spacing: 0.3px;
+.draft-pill {
+  position: absolute; top: 10px; right: 10px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.6px;
+  padding: 3px 8px; border-radius: var(--r-pill);
+  background: rgba(255,255,255,0.92); color: var(--ink);
+  font-weight: 600; backdrop-filter: blur(4px);
 }
+.ref-count-badge {
+  position: absolute; bottom: 10px; right: 10px;
+  font-family: var(--mono); font-size: 10.5px;
+  padding: 3px 8px; border-radius: var(--r-pill);
+  background: rgba(255,255,255,0.92); color: var(--ink);
+  display: inline-flex; align-items: center; gap: 4px;
+  z-index: 2; /* sit above caption gradient */
+}
+.ref-count-badge svg { opacity: 0.7; }
 .thumb .vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.18) 100%); pointer-events: none; }
 
 .badge { position: absolute; top: 10px; left: 10px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 8px; border-radius: var(--r-pill); font-size: 11.5px; font-weight: 540; letter-spacing: -0.1px; color: var(--ink); background: var(--canvas); }
@@ -1542,6 +1571,7 @@ function cardEl(asset, idx) {
   const isMulti = state.multiSelection.has(asset.id);
   a.className = 'card' + (isCurrent ? ' selected' : '') + (isMulti ? ' multi-selected' : '');
   if (asset._stack) a.classList.add('stacked');
+  if (asset.status === 'draft' || asset.status === 'firing') a.classList.add('draft-card');
   a.dataset.status = asset.status;
   a.dataset.id = asset.id;
   a.dataset.idx = idx;
@@ -1571,17 +1601,43 @@ function cardEl(asset, idx) {
     || (isOrphan ? '— unassigned' : (asset.filename || '').slice(0, 14) + ((asset.filename || '').length > 14 ? '…' : ''));
   const shotStyle = (asset.shot_id || asset.scene) ? '' : 'style="color:#8a877f"';
 
-  // Issue #26 — for drafts, render a text preview block in place of the image/frame
-  // so the Drafts tab is scannable. Real-media cards keep the original thumbnail.
-  // Firing cards get an elapsed timer so you can see what's cooking.
+  // Draft card (status=draft|firing): redesigned 2026-05-20 per director feedback.
+  // Use first ref image as the thumbnail so the card is anchored on the most
+  // visual piece of context the draft has. Dashed border (.draft-card class)
+  // signals "not built yet". Bottom caption overlay shows model + 1-line prompt
+  // snippet. Top-right "DRAFT" pill. Bottom-right ref-count badge when N > 1.
+  // Falls back to a centered text placeholder when no refs available.
   const isFiring = asset.status === 'firing';
   const firingElapsed = isFiring ? `<span class="firing-elapsed" data-asset-id="${asset.id}"></span>` : '';
+  const firstRefUrl = (asset.refs_resolved && asset.refs_resolved[0] && asset.refs_resolved[0].url) || '';
+  // Trim a one-line prompt snippet: strip common "Scene composition + style: ..."
+  // preamble lines so the action / timecode block surfaces. Falls through to
+  // raw prompt if nothing to strip.
+  const draftPromptSnippet = (() => {
+    if (!draftPrompt) return '';
+    return draftPrompt
+      .replace(/^Scene composition[^.]*\.\s*/i, '')
+      .replace(/^Subject identity[^.]*\.\s*/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  })();
+  const draftMetaLine = [asset.model || '', asset.workflow || ''].filter(Boolean).join(' · ');
   const thumbInner = isDraftCard
-    ? `<div class="thumb-draft-preview">
-         ${meta ? `<div class="dp-meta">${escapeHtml(meta)}</div>` : ''}
-         <div class="dp-prompt ${draftPrompt ? '' : 'empty'}">${draftPrompt ? escapeHtml(draftPrompt) : isFiring ? 'Cooking…' : 'No prompt yet'}</div>
-         ${draftRefsCount ? `<div class="dp-refs">refs: ${draftRefsCount} ${draftRefsCount === 1 ? 'img' : 'imgs'}</div>` : ''}
-       </div>${firingElapsed}`
+    ? (firstRefUrl
+        ? `<img class="thumb-draft-ref" loading="lazy" alt="" src="${escapeHtml(firstRefUrl)}" onerror="this.style.display='none'">
+           <div class="thumb-draft-caption">
+             ${draftMetaLine ? `<div class="tdc-model">${escapeHtml(draftMetaLine)}</div>` : ''}
+             ${draftPromptSnippet ? `<div class="tdc-prompt">${escapeHtml(draftPromptSnippet)}</div>` : (isFiring ? '<div class="tdc-prompt">Cooking…</div>' : '')}
+           </div>
+           <span class="draft-pill">${isFiring ? 'FIRING' : 'DRAFT'}</span>
+           ${draftRefsCount > 1 ? `<span class="ref-count-badge"><svg width="9" height="9" viewBox="0 0 10 10"><rect x="0.5" y="2.5" width="6" height="6" fill="none" stroke="currentColor"/><rect x="3.5" y="0.5" width="6" height="6" fill="none" stroke="currentColor"/></svg>${draftRefsCount}</span>` : ''}
+           ${firingElapsed}`
+        : `<div class="thumb-draft-preview">
+             <div class="dp-prompt-empty">${draftPromptSnippet ? escapeHtml(draftPromptSnippet.slice(0,160)) : (isFiring ? 'Cooking…' : 'No refs · ' + (draftPrompt ? 'see prompt' : 'no prompt yet'))}</div>
+           </div>
+           <span class="draft-pill">${isFiring ? 'FIRING' : 'DRAFT'}</span>
+           ${firingElapsed}`
+      )
     : `<div class="frame"></div>
        <img loading="lazy" alt="" src="${escapeHtml(asset.thumb_url || '')}" onerror="this.style.display='none'">
        <div class="vignette"></div>`;
