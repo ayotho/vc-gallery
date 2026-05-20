@@ -47,6 +47,12 @@ VALID_WORKFLOWS = {
     "multi-angle-retexture",   # playbooks/multi-angle-panel.md (retexture variant)
     "retexture",               # playbooks/retexture-pipeline.md
     "character-reference",     # playbooks/character-reference.md
+    # Video workflows (2026-05-20) — gens that produce .mp4/.mov/.webm
+    "i2v",                     # image-to-video: Kling, Seedance, Veo with start frame
+    "t2v",                     # text-to-video: pure prompt, no input frame
+    "v2v",                     # video-to-video: restyle, motion transfer, upscale
+    "lipsync",                 # audio-driven lip animation (avatar models)
+    "cinema-studio",           # Cinematic Studio 2.5 / 3.0 multi-shot
     # Sidecar-only tags (no playbook; reference material)
     "2-pass",                  # 2-pass refinement work
     "backfill",                # retro-applied fixes

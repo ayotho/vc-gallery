@@ -309,6 +309,10 @@ def _build_create_argv(payload: dict) -> list[str]:
         args += ["--mode", payload["mode"]]
     if "genre" in payload:
         args += ["--genre", payload["genre"]]
+    if "sound" in payload:
+        args += ["--sound", payload["sound"]]
+    if "seed" in payload:
+        args += ["--seed", str(payload["seed"])]
     # Media flags — schema accepts string OR array for each; CLI accepts repeated flags
     # (multi-ref face-swap, multi-character identity, multi-clip stitch, etc.).
     # Per `higgsfield generate create --help`: "Media flags: --image, --start-image, --end-image, --video, --audio."

@@ -1972,8 +1972,12 @@ async function fillDrawer(id) {
     pillsRoot.appendChild(p);
   });
 
-  // Action buttons
-  body.querySelectorAll('.act-btn').forEach(b => {
+  // Action buttons — only status-change buttons (Accept / Hero / Revise / Reject).
+  // Fire-draft + Delete-draft also carry .act-btn for styling but have NO data-status,
+  // so they MUST be excluded — otherwise their click also fires patchAsset({status: undefined})
+  // which produces a "Marked undefined" toast and corrupts the asset status. Selector
+  // narrowed 2026-05-20 to require [data-status].
+  body.querySelectorAll('.act-btn[data-status]').forEach(b => {
     b.addEventListener('click', async () => {
       const target = b.dataset.status;
       await patchAsset(asset.id, { status: target });
