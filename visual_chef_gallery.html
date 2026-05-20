@@ -665,6 +665,22 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 }
 .ref-thumb-meta .ref-num { font-weight: 600; opacity: 0.55; flex-shrink: 0; }
 .ref-thumb-meta .ref-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref-copy-btn {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  width: 26px; height: 26px; border-radius: var(--r-full);
+  background: rgba(255,255,255,0.92); color: var(--ink);
+  border: 1px solid rgba(0,0,0,0.08); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity 120ms ease, transform 120ms ease;
+  backdrop-filter: blur(4px);
+}
+.ref-thumb:hover .ref-copy-btn,
+.ref-copy-btn.copied,
+.ref-copy-btn:focus-visible { opacity: 1; }
+.ref-copy-btn:hover { background: var(--canvas); transform: scale(1.06); }
+.ref-copy-btn.copied { background: #c7e9d2; color: #1d6b3a; }
+.ref-copy-btn.busy { opacity: 1; }
+.ref-copy-btn.error { opacity: 1; background: #fceaea; color: #8e2727; }
 
 /* Draft mode styling */
 .draft-banner {
@@ -2042,9 +2058,20 @@ async function fillDrawer(id) {
       const previewHtml = src
         ? `<img class="ref-thumb-img" loading="lazy" src="${src}" alt="${safeName}" onerror="this.classList.add('broken')">`
         : `<div class="ref-thumb-img broken"></div>`;
+      // Copy button only when we have a fetchable URL — files via /ref?path=
+      // and direct URLs both work. Skip for refs with no resolved src.
+      const copyBtnHtml = src
+        ? `<button class="ref-copy-btn" data-copy-src="${src}" data-copy-name="${safeName}" title="Copy image to clipboard" aria-label="Copy image">
+             <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+               <rect x="3.5" y="3.5" width="8" height="9" rx="1"/>
+               <path d="M3.5 3.5 V2 a1 1 0 0 1 1 -1 H10 a1 1 0 0 1 1 1 V3.5"/>
+             </svg>
+           </button>`
+        : '';
       return `
         <div class="ref-thumb" data-src="${src}" title="${safeName}">
           ${previewHtml}
+          ${copyBtnHtml}
           <div class="ref-thumb-meta">
             <span class="ref-num">${String(i + 1).padStart(2, '0')}</span>
             <span class="ref-name">${safeName}</span>
@@ -2287,11 +2314,56 @@ async function fillDrawer(id) {
     });
   }
 
-  // Ref-thumb click — open the full ref in a new tab
+  // Ref-thumb click — open the full ref in a new tab. Excludes the copy
+  // button (whose click handler is bound separately below and stops
+  // propagation so it never opens the new-tab fallback).
   body.querySelectorAll('.ref-thumb').forEach(el => {
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.ref-copy-btn')) return;
       const src = el.dataset.src;
       if (src) window.open(src, '_blank');
+    });
+  });
+
+  // Copy-ref-image to clipboard (PNG/JPEG/WebP bytes via Clipboard API).
+  // Works for ALL drawer refs regardless of asset status — drafts, review,
+  // hero, anything. Falls back gracefully if the browser blocks the
+  // Clipboard API or the fetch fails. Director directive 2026-05-21.
+  body.querySelectorAll('.ref-copy-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();  // don't open the new-tab handler
+      e.preventDefault();
+      const src = btn.dataset.copySrc;
+      const name = btn.dataset.copyName || 'image';
+      if (!src) return;
+      btn.classList.remove('copied', 'error');
+      btn.classList.add('busy');
+      try {
+        const resp = await fetch(src);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        let blob = await resp.blob();
+        // Clipboard API requires image/png or image/jpeg (Chrome) — image/webp
+        // is rejected. Re-encode via canvas if the original isn't a friendly type.
+        const okTypes = ['image/png', 'image/jpeg'];
+        if (!okTypes.includes(blob.type)) {
+          blob = await reencodeToPng(blob);
+        }
+        if (!navigator.clipboard || !window.ClipboardItem) {
+          throw new Error('Clipboard API unavailable (try Chrome/Safari)');
+        }
+        await navigator.clipboard.write([
+          new ClipboardItem({ [blob.type]: blob })
+        ]);
+        btn.classList.remove('busy');
+        btn.classList.add('copied');
+        flashToast(`Copied · ${name}`);
+        setTimeout(() => btn.classList.remove('copied'), 1500);
+      } catch (err) {
+        btn.classList.remove('busy');
+        btn.classList.add('error');
+        flashToast('Copy failed: ' + (err && err.message ? err.message : String(err)), 'error');
+        setTimeout(() => btn.classList.remove('error'), 2000);
+      }
     });
   });
 
@@ -2454,6 +2526,32 @@ function metaRowLink(k, url, label, mono) {
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Re-encode any image blob to PNG so the Clipboard API will accept it.
+// Chrome's clipboard.write only accepts image/png and image/jpeg — webp,
+// avif, and gif need conversion. Uses a Canvas2D round-trip; preserves
+// alpha by outputting PNG.
+async function reencodeToPng(blob) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = () => reject(new Error('image decode failed'));
+      im.src = url;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth || img.width;
+    canvas.height = img.naturalHeight || img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob(b => b ? resolve(b) : reject(new Error('canvas encode failed')), 'image/png');
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 // -------- Mutations ---------------------------------------------------
