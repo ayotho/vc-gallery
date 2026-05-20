@@ -1034,7 +1034,8 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
         <div class="ihf-row">
           <label class="ihf-field ihf-half">
             <span class="ihf-label">Shot ID</span>
-            <input type="text" id="ihf-shot" placeholder="SH1620A" autocomplete="off" spellcheck="false">
+            <input type="text" id="ihf-shot" list="ihf-shot-list" placeholder="SH1620A · type to search or pick" autocomplete="off" spellcheck="false">
+            <datalist id="ihf-shot-list"></datalist>
           </label>
           <label class="ihf-field ihf-half">
             <span class="ihf-label">Workflow</span>
@@ -1056,7 +1057,8 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
         <div class="ihf-row">
           <label class="ihf-field ihf-half">
             <span class="ihf-label">Scene</span>
-            <input type="text" id="ihf-scene" placeholder="scene_slug" autocomplete="off" spellcheck="false">
+            <input type="text" id="ihf-scene" list="ihf-scene-list" placeholder="type to search or pick" autocomplete="off" spellcheck="false">
+            <datalist id="ihf-scene-list"></datalist>
           </label>
           <label class="ihf-field ihf-half">
             <span class="ihf-label">Filename override</span>
@@ -2889,8 +2891,36 @@ function bindTopbar() {
     ihfFields.force.checked = false;
     ihfClearStatus();
   };
+  // Populate the shot_id + scene datalists from the live facets endpoint.
+  // Sorted by usage count (descending) so the busiest shots float to the
+  // top of the autocomplete list. Re-fetches on each open so newly-imported
+  // shots show up immediately. Director can still type a free-text value
+  // for first-time shots/scenes — datalist is suggestion-only.
+  const ihfPopulateOptions = async () => {
+    const shotDL = $('#ihf-shot-list');
+    const sceneDL = $('#ihf-scene-list');
+    if (!shotDL || !sceneDL) return;
+    try {
+      const r = await fetch('/api/facets');
+      if (!r.ok) return;
+      const f = await r.json();
+      const buildOptions = (obj) => {
+        const entries = Object.entries(obj || {})
+          .sort((a, b) => (b[1] || 0) - (a[1] || 0));
+        return entries.map(([k, count]) =>
+          `<option value="${k.replace(/"/g, '&quot;')}">${count} use${count === 1 ? '' : 's'}</option>`
+        ).join('');
+      };
+      shotDL.innerHTML = buildOptions(f.shot_id);
+      sceneDL.innerHTML = buildOptions(f.scene);
+    } catch (_e) {
+      // Silent: popover still works without autocomplete suggestions
+    }
+  };
+
   const ihfOpen = () => {
     ihfPop.hidden = false;
+    ihfPopulateOptions();
     setTimeout(() => ihfFields.url.focus(), 0);
   };
   const ihfClosePop = () => {
