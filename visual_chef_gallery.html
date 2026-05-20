@@ -97,6 +97,57 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .icon-btn:disabled, .icon-btn.disabled { color: #c9c6bd; cursor: not-allowed; opacity: 0.55; }
 .icon-btn:disabled:hover, .icon-btn.disabled:hover { background: transparent; }
 .icon-btn:hover { background: var(--surface-soft); }
+
+/* Import-from-HF popover. Fixed-position so it floats above the canvas +
+   drawer without depending on ancestor positioning. Anchored under the
+   download icon in the top-right corner. */
+.import-hf-popover {
+  position: fixed; top: 60px; right: 16px; z-index: 1000;
+  width: 380px; max-width: calc(100vw - 32px);
+  background: var(--canvas); border: 1px solid var(--hairline);
+  border-radius: var(--r-md); box-shadow: 0 12px 32px rgba(0,0,0,0.18), 0 4px 12px rgba(0,0,0,0.08);
+  font-size: 12.5px;
+}
+.import-hf-popover .ihf-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px 10px; border-bottom: 1px solid var(--hairline-soft);
+}
+.import-hf-popover .ihf-title { font-weight: 540; color: var(--ink); letter-spacing: -0.1px; font-size: 13px; }
+.import-hf-popover .ihf-close { background: transparent; color: #8a877f; font-size: 13px; padding: 2px 6px; border-radius: 4px; }
+.import-hf-popover .ihf-close:hover { background: var(--surface-soft); color: var(--ink); }
+.import-hf-popover .ihf-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.import-hf-popover .ihf-row { display: flex; gap: 10px; }
+.import-hf-popover .ihf-field { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.import-hf-popover .ihf-field.ihf-half { flex: 1 1 0; min-width: 0; }
+.import-hf-popover .ihf-label { font-size: 10.5px; letter-spacing: 0.5px; text-transform: uppercase; color: #6f6c64; font-weight: 500; }
+.import-hf-popover .ihf-req { color: #c0392b; font-weight: 540; margin-left: 2px; }
+.import-hf-popover input[type="text"], .import-hf-popover select {
+  background: var(--surface-soft); border: 1px solid var(--hairline);
+  border-radius: var(--r-sm); padding: 7px 10px; font-size: 12.5px;
+  color: var(--ink); font-family: inherit; width: 100%; box-sizing: border-box;
+}
+.import-hf-popover input[type="text"]:focus, .import-hf-popover select:focus { outline: 1px solid var(--primary); border-color: var(--primary); }
+.import-hf-popover input[type="text"]::placeholder { color: #b7b3a9; }
+.import-hf-popover .ihf-status { padding: 8px 10px; border-radius: var(--r-sm); font-size: 12px; line-height: 1.4; }
+.import-hf-popover .ihf-status.ok { background: #e8f5ec; color: #1d6b3a; border: 1px solid #c7e9d2; }
+.import-hf-popover .ihf-status.err { background: #fceaea; color: #8e2727; border: 1px solid #f0c8c8; }
+.import-hf-popover .ihf-status.busy { background: var(--surface-soft); color: #6f6c64; border: 1px solid var(--hairline); }
+.import-hf-popover .ihf-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px 12px; border-top: 1px solid var(--hairline-soft); gap: 10px;
+}
+.import-hf-popover .ihf-force { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: #6f6c64; }
+.import-hf-popover .ihf-force input { transform: translateY(1px); }
+.import-hf-popover .ihf-actions { display: flex; gap: 8px; }
+.import-hf-popover .ihf-cancel, .import-hf-popover .ihf-submit {
+  padding: 7px 14px; border-radius: var(--r-pill); font-size: 12.5px; font-weight: 500;
+  border: 1px solid var(--hairline); cursor: pointer;
+}
+.import-hf-popover .ihf-cancel { background: var(--canvas); color: var(--ink); }
+.import-hf-popover .ihf-cancel:hover { background: var(--surface-soft); }
+.import-hf-popover .ihf-submit { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+.import-hf-popover .ihf-submit:hover:not(:disabled) { filter: brightness(1.05); }
+.import-hf-popover .ihf-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 .icon-btn.soft { background: var(--surface-soft); }
 .icon-btn.soft:hover { background: #e6e4dd; }
 
@@ -331,33 +382,62 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .thumb { position: relative; display: block; }
 .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .thumb .frame { position: absolute; inset: 0; background-size: cover; background-position: center; background-color: #1a1a1d; }
-/* Issue #26 — draft thumbnails show a text-preview of the prompt instead of a
-   black tile. Subtle off-canvas background so the eye registers "this is a draft
-   preview" rather than "this is broken media". Status-gated — only renders for
-   asset.status === 'draft' || 'firing'. */
+/* Draft card visual treatment (2026-05-20 redesign).
+   Director feedback: text walls were unscannable. New treatment uses the
+   FIRST ref image as the thumbnail, dashes the card border so drafts read
+   as "wireframe / not built yet", and shows model + first prompt snippet
+   in a small caption strip overlaid on the bottom of the thumb. Multi-ref
+   surfaced via a small count badge bottom-right. */
+.card.draft-card { border: 1.5px dashed #b7b3a9; background: var(--surface-soft); }
+.card.draft-card:hover { border-color: var(--ink); }
+
 .thumb-draft-preview {
   position: absolute; inset: 0;
   display: flex; flex-direction: column; gap: 6px;
-  padding: 36px 14px 12px;  /* top space lets the status badge breathe */
+  padding: 36px 14px 12px;
   background: var(--surface-soft);
   color: var(--ink);
   overflow: hidden;
 }
-.thumb-draft-preview .dp-meta {
-  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.4px;
-  text-transform: uppercase; color: #6f6c64;
+.thumb-draft-preview .dp-prompt-empty {
+  font-size: 12.5px; color: #8a877f; font-style: italic; text-align: center; margin: auto 0;
+}
+.thumb-draft-ref {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block; background: #1a1a1d;
+}
+.thumb-draft-caption {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 12px 10px;
+  background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.62) 60%, rgba(0,0,0,0.82) 100%);
+  color: #fff; font-size: 11.5px; line-height: 1.35;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.thumb-draft-caption .tdc-model {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px;
+  text-transform: uppercase; color: rgba(255,255,255,0.78); font-weight: 500;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.thumb-draft-preview .dp-prompt {
-  font-size: 12.5px; line-height: 1.42; color: #2a2825;
-  flex: 1; min-height: 0; overflow: hidden;
-  display: -webkit-box; -webkit-line-clamp: 7; -webkit-box-orient: vertical;
-  word-break: break-word;
+.thumb-draft-caption .tdc-prompt {
+  color: rgba(255,255,255,0.96); font-weight: 460;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word;
 }
-.thumb-draft-preview .dp-prompt.empty { color: #8a877f; font-style: italic; }
-.thumb-draft-preview .dp-refs {
-  font-family: var(--mono); font-size: 10.5px; color: #6f6c64; letter-spacing: 0.3px;
+.draft-pill {
+  position: absolute; top: 10px; right: 10px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.6px;
+  padding: 3px 8px; border-radius: var(--r-pill);
+  background: rgba(255,255,255,0.92); color: var(--ink);
+  font-weight: 600; backdrop-filter: blur(4px);
 }
+.ref-count-badge {
+  position: absolute; bottom: 10px; right: 10px;
+  font-family: var(--mono); font-size: 10.5px;
+  padding: 3px 8px; border-radius: var(--r-pill);
+  background: rgba(255,255,255,0.92); color: var(--ink);
+  display: inline-flex; align-items: center; gap: 4px;
+  z-index: 2; /* sit above caption gradient */
+}
+.ref-count-badge svg { opacity: 0.7; }
 .thumb .vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.18) 100%); pointer-events: none; }
 
 .badge { position: absolute; top: 10px; left: 10px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 8px; border-radius: var(--r-pill); font-size: 11.5px; font-weight: 540; letter-spacing: -0.1px; color: var(--ink); background: var(--canvas); }
@@ -963,9 +1043,72 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1 C 9 4 12 5 12 9 a 4 4 0 0 1 -8 0 c 0 -3 2 -5 4 -8 z" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>
         <span class="fires-count" id="fires-count">0</span>
       </button>
+      <button class="icon-btn" id="btn-import-hf" title="Import from Higgsfield asset URL" style="position: relative;">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2 V10 M5 7 L8 10 L11 7 M3 12 V13 H13 V12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+      </button>
       <button class="icon-btn" id="btn-rescan" title="Rescan working folder">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89 M13.5 2.5 V5 H11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" fill="none"/></svg>
       </button>
+    </div>
+
+    <!-- Import-from-HF popover (anchored below #btn-import-hf, hidden by default) -->
+    <div id="import-hf-popover" class="import-hf-popover" hidden>
+      <div class="ihf-head">
+        <span class="ihf-title">Import from Higgsfield</span>
+        <button class="ihf-close" id="ihf-close" title="Close" aria-label="Close">✕</button>
+      </div>
+      <div class="ihf-body">
+        <label class="ihf-field">
+          <span class="ihf-label">Asset URL or job ID <span class="ihf-req">*</span></span>
+          <input type="text" id="ihf-url" placeholder="https://higgsfield.ai/asset/all/&lt;uuid&gt;  or  &lt;uuid&gt;" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="ihf-row">
+          <label class="ihf-field ihf-half">
+            <span class="ihf-label">Shot ID</span>
+            <input type="text" id="ihf-shot" list="ihf-shot-list" placeholder="SH1620A · type to search or pick" autocomplete="off" spellcheck="false">
+            <datalist id="ihf-shot-list"></datalist>
+          </label>
+          <label class="ihf-field ihf-half">
+            <span class="ihf-label">Workflow</span>
+            <select id="ihf-workflow">
+              <option value="">auto-detect</option>
+              <option value="i2v">i2v · image-to-video</option>
+              <option value="t2v">t2v · text-to-video</option>
+              <option value="v2v">v2v · video-to-video</option>
+              <option value="lipsync">lipsync</option>
+              <option value="cinema-studio">cinema-studio</option>
+              <option value="createframe">createframe</option>
+              <option value="character-reference">character-reference</option>
+              <option value="multi-angle">multi-angle</option>
+              <option value="retexture">retexture</option>
+              <option value="unknown">unknown</option>
+            </select>
+          </label>
+        </div>
+        <div class="ihf-row">
+          <label class="ihf-field ihf-half">
+            <span class="ihf-label">Scene</span>
+            <input type="text" id="ihf-scene" list="ihf-scene-list" placeholder="type to search or pick" autocomplete="off" spellcheck="false">
+            <datalist id="ihf-scene-list"></datalist>
+          </label>
+          <label class="ihf-field ihf-half">
+            <span class="ihf-label">Filename override</span>
+            <input type="text" id="ihf-filename" placeholder="(auto from shot_id + model)" autocomplete="off" spellcheck="false">
+          </label>
+        </div>
+        <label class="ihf-field">
+          <span class="ihf-label">Notes</span>
+          <input type="text" id="ihf-notes" placeholder="optional context" autocomplete="off">
+        </label>
+        <div class="ihf-status" id="ihf-status" hidden></div>
+      </div>
+      <div class="ihf-foot">
+        <label class="ihf-force"><input type="checkbox" id="ihf-force"> overwrite if file exists</label>
+        <div class="ihf-actions">
+          <button class="ihf-cancel" id="ihf-cancel">Cancel</button>
+          <button class="ihf-submit" id="ihf-submit">Import</button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -1430,6 +1573,7 @@ function cardEl(asset, idx) {
   const isMulti = state.multiSelection.has(asset.id);
   a.className = 'card' + (isCurrent ? ' selected' : '') + (isMulti ? ' multi-selected' : '');
   if (asset._stack) a.classList.add('stacked');
+  if (asset.status === 'draft' || asset.status === 'firing') a.classList.add('draft-card');
   a.dataset.status = asset.status;
   a.dataset.id = asset.id;
   a.dataset.idx = idx;
@@ -1459,17 +1603,43 @@ function cardEl(asset, idx) {
     || (isOrphan ? '— unassigned' : (asset.filename || '').slice(0, 14) + ((asset.filename || '').length > 14 ? '…' : ''));
   const shotStyle = (asset.shot_id || asset.scene) ? '' : 'style="color:#8a877f"';
 
-  // Issue #26 — for drafts, render a text preview block in place of the image/frame
-  // so the Drafts tab is scannable. Real-media cards keep the original thumbnail.
-  // Firing cards get an elapsed timer so you can see what's cooking.
+  // Draft card (status=draft|firing): redesigned 2026-05-20 per director feedback.
+  // Use first ref image as the thumbnail so the card is anchored on the most
+  // visual piece of context the draft has. Dashed border (.draft-card class)
+  // signals "not built yet". Bottom caption overlay shows model + 1-line prompt
+  // snippet. Top-right "DRAFT" pill. Bottom-right ref-count badge when N > 1.
+  // Falls back to a centered text placeholder when no refs available.
   const isFiring = asset.status === 'firing';
   const firingElapsed = isFiring ? `<span class="firing-elapsed" data-asset-id="${asset.id}"></span>` : '';
+  const firstRefUrl = (asset.refs_resolved && asset.refs_resolved[0] && asset.refs_resolved[0].url) || '';
+  // Trim a one-line prompt snippet: strip common "Scene composition + style: ..."
+  // preamble lines so the action / timecode block surfaces. Falls through to
+  // raw prompt if nothing to strip.
+  const draftPromptSnippet = (() => {
+    if (!draftPrompt) return '';
+    return draftPrompt
+      .replace(/^Scene composition[^.]*\.\s*/i, '')
+      .replace(/^Subject identity[^.]*\.\s*/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  })();
+  const draftMetaLine = [asset.model || '', asset.workflow || ''].filter(Boolean).join(' · ');
   const thumbInner = isDraftCard
-    ? `<div class="thumb-draft-preview">
-         ${meta ? `<div class="dp-meta">${escapeHtml(meta)}</div>` : ''}
-         <div class="dp-prompt ${draftPrompt ? '' : 'empty'}">${draftPrompt ? escapeHtml(draftPrompt) : isFiring ? 'Cooking…' : 'No prompt yet'}</div>
-         ${draftRefsCount ? `<div class="dp-refs">refs: ${draftRefsCount} ${draftRefsCount === 1 ? 'img' : 'imgs'}</div>` : ''}
-       </div>${firingElapsed}`
+    ? (firstRefUrl
+        ? `<img class="thumb-draft-ref" loading="lazy" alt="" src="${escapeHtml(firstRefUrl)}" onerror="this.style.display='none'">
+           <div class="thumb-draft-caption">
+             ${draftMetaLine ? `<div class="tdc-model">${escapeHtml(draftMetaLine)}</div>` : ''}
+             ${draftPromptSnippet ? `<div class="tdc-prompt">${escapeHtml(draftPromptSnippet)}</div>` : (isFiring ? '<div class="tdc-prompt">Cooking…</div>' : '')}
+           </div>
+           <span class="draft-pill">${isFiring ? 'FIRING' : 'DRAFT'}</span>
+           ${draftRefsCount > 1 ? `<span class="ref-count-badge"><svg width="9" height="9" viewBox="0 0 10 10"><rect x="0.5" y="2.5" width="6" height="6" fill="none" stroke="currentColor"/><rect x="3.5" y="0.5" width="6" height="6" fill="none" stroke="currentColor"/></svg>${draftRefsCount}</span>` : ''}
+           ${firingElapsed}`
+        : `<div class="thumb-draft-preview">
+             <div class="dp-prompt-empty">${draftPromptSnippet ? escapeHtml(draftPromptSnippet.slice(0,160)) : (isFiring ? 'Cooking…' : 'No refs · ' + (draftPrompt ? 'see prompt' : 'no prompt yet'))}</div>
+           </div>
+           <span class="draft-pill">${isFiring ? 'FIRING' : 'DRAFT'}</span>
+           ${firingElapsed}`
+      )
     : `<div class="frame"></div>
        <img loading="lazy" alt="" src="${escapeHtml(asset.thumb_url || '')}" onerror="this.style.display='none'">
        <div class="vignette"></div>`;
@@ -1974,8 +2144,12 @@ async function fillDrawer(id) {
     pillsRoot.appendChild(p);
   });
 
-  // Action buttons
-  body.querySelectorAll('.act-btn').forEach(b => {
+  // Action buttons — only status-change buttons (Accept / Hero / Revise / Reject).
+  // Fire-draft + Delete-draft also carry .act-btn for styling but have NO data-status,
+  // so they MUST be excluded — otherwise their click also fires patchAsset({status: undefined})
+  // which produces a "Marked undefined" toast and corrupts the asset status. Selector
+  // narrowed 2026-05-20 to require [data-status].
+  body.querySelectorAll('.act-btn[data-status]').forEach(b => {
     b.addEventListener('click', async () => {
       const target = b.dataset.status;
       await patchAsset(asset.id, { status: target });
@@ -2774,6 +2948,154 @@ function bindTopbar() {
       await refresh();
     } catch (e) {
       flashToast('Rescan failed: ' + e.message, 'error');
+    }
+  });
+
+  // ── Import-from-HF popover ─────────────────────────────────────────────
+  const ihfBtn = $('#btn-import-hf');
+  const ihfPop = $('#import-hf-popover');
+  const ihfClose = $('#ihf-close');
+  const ihfCancel = $('#ihf-cancel');
+  const ihfSubmit = $('#ihf-submit');
+  const ihfStatus = $('#ihf-status');
+  const ihfFields = {
+    url:      $('#ihf-url'),
+    shot:     $('#ihf-shot'),
+    workflow: $('#ihf-workflow'),
+    scene:    $('#ihf-scene'),
+    filename: $('#ihf-filename'),
+    notes:    $('#ihf-notes'),
+    force:    $('#ihf-force'),
+  };
+
+  const ihfShowStatus = (kind, msg) => {
+    ihfStatus.hidden = false;
+    ihfStatus.className = 'ihf-status ' + kind;
+    ihfStatus.textContent = msg;
+  };
+  const ihfClearStatus = () => { ihfStatus.hidden = true; ihfStatus.textContent = ''; };
+  const ihfClearFields = () => {
+    ihfFields.url.value = '';
+    ihfFields.shot.value = '';
+    ihfFields.workflow.value = '';
+    ihfFields.scene.value = '';
+    ihfFields.filename.value = '';
+    ihfFields.notes.value = '';
+    ihfFields.force.checked = false;
+    ihfClearStatus();
+  };
+  // Populate the shot_id + scene datalists from the live facets endpoint.
+  // Sorted by usage count (descending) so the busiest shots float to the
+  // top of the autocomplete list. Re-fetches on each open so newly-imported
+  // shots show up immediately. Director can still type a free-text value
+  // for first-time shots/scenes — datalist is suggestion-only.
+  const ihfPopulateOptions = async () => {
+    const shotDL = $('#ihf-shot-list');
+    const sceneDL = $('#ihf-scene-list');
+    if (!shotDL || !sceneDL) return;
+    try {
+      const r = await fetch('/api/facets');
+      if (!r.ok) return;
+      const f = await r.json();
+      const buildOptions = (obj) => {
+        const entries = Object.entries(obj || {})
+          .sort((a, b) => (b[1] || 0) - (a[1] || 0));
+        return entries.map(([k, count]) =>
+          `<option value="${k.replace(/"/g, '&quot;')}">${count} use${count === 1 ? '' : 's'}</option>`
+        ).join('');
+      };
+      shotDL.innerHTML = buildOptions(f.shot_id);
+      sceneDL.innerHTML = buildOptions(f.scene);
+    } catch (_e) {
+      // Silent: popover still works without autocomplete suggestions
+    }
+  };
+
+  const ihfOpen = () => {
+    ihfPop.hidden = false;
+    ihfPopulateOptions();
+    setTimeout(() => ihfFields.url.focus(), 0);
+  };
+  const ihfClosePop = () => {
+    ihfPop.hidden = true;
+    ihfClearStatus();
+  };
+
+  ihfBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (ihfPop.hidden) ihfOpen(); else ihfClosePop();
+  });
+  ihfClose.addEventListener('click', ihfClosePop);
+  ihfCancel.addEventListener('click', ihfClosePop);
+
+  // Close on Escape (when popover focused) and on outside-click
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !ihfPop.hidden) {
+      // Only handle if the popover (or one of its inputs) is the active focus area
+      const active = document.activeElement;
+      if (ihfPop.contains(active) || active === document.body) { ihfClosePop(); }
+    }
+  });
+  document.addEventListener('click', (e) => {
+    if (ihfPop.hidden) return;
+    if (ihfPop.contains(e.target) || ihfBtn.contains(e.target)) return;
+    ihfClosePop();
+  });
+
+  const ihfSubmitHandler = async () => {
+    const url = ihfFields.url.value.trim();
+    if (!url) {
+      ihfShowStatus('err', 'URL is required.');
+      ihfFields.url.focus();
+      return;
+    }
+    const body = {
+      url,
+      shot_id: ihfFields.shot.value.trim(),
+      workflow: ihfFields.workflow.value.trim(),
+      scene: ihfFields.scene.value.trim(),
+      filename: ihfFields.filename.value.trim(),
+      notes: ihfFields.notes.value.trim(),
+      force: ihfFields.force.checked,
+    };
+    ihfSubmit.disabled = true;
+    ihfShowStatus('busy', 'Importing… (downloading from Higgsfield, may take a few seconds)');
+    try {
+      const r = await fetch('/api/import-hf', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.ok) {
+        const msg = data.message || data.error || `HTTP ${r.status}`;
+        ihfShowStatus('err', '✗ ' + msg);
+        ihfSubmit.disabled = false;
+        return;
+      }
+      const a = data.asset || {};
+      const dim = (a.width && a.height) ? `${a.width}×${a.height}` : '?';
+      const dur = a.duration_sec ? `${a.duration_sec.toFixed(1)}s` : '';
+      ihfShowStatus('ok', `✓ Asset #${a.asset_id} · ${a.model} · ${dim}${dur ? ' · ' + dur : ''}`);
+      flashToast(`Imported #${a.asset_id} · ${a.filename}`);
+      // Refresh grid + open the new asset in the drawer
+      await refreshFacets();
+      await refresh();
+      try { await selectAsset(a.asset_id); } catch (_e) { /* drawer may not be ready */ }
+      // Reset form for the next import after a short delay
+      setTimeout(() => { ihfClearFields(); ihfSubmit.disabled = false; ihfClosePop(); }, 800);
+    } catch (e) {
+      ihfShowStatus('err', '✗ ' + (e && e.message ? e.message : String(e)));
+      ihfSubmit.disabled = false;
+    }
+  };
+  ihfSubmit.addEventListener('click', ihfSubmitHandler);
+  // Enter inside any input submits (except notes which is also single-line — fine)
+  Object.values(ihfFields).forEach(f => {
+    if (f && f.tagName === 'INPUT' && f.type === 'text') {
+      f.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); ihfSubmitHandler(); }
+      });
     }
   });
 

@@ -75,6 +75,17 @@
       "enum": ["auto", "action", "horror", "comedy", "noir", "drama", "epic"],
       "description": "Cinematic genre register for Seedance 2.0. Influences pacing, lighting, motion register. Passed as --genre to the CLI. Default 'auto'."
     },
+    "sound": {
+      "type": "string",
+      "enum": ["on", "off"],
+      "description": "Audio generation toggle for video models (Kling 3.0+, Veo 3, Sora 2). When 'on', the model generates diegetic ambient audio matched to the visual. Director rule: diegetic only — never enable for models that produce music/score. Default 'on' (Kling)."
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295,
+      "description": "Deterministic seed for reproducible gens. Supported per-model — Higgsfield silently ignores for unsupported models. Useful for variance-testing while holding other knobs fixed."
+    },
     "wait_timeout_seconds": {
       "type": "integer",
       "minimum": 30,
@@ -127,9 +138,18 @@
         "2-pass",
         "backfill",
         "frame-capture",
+        "i2v",
+        "t2v",
+        "v2v",
+        "lipsync",
+        "cinema-studio",
         "unknown"
       ],
-      "description": "Must match VALID_WORKFLOWS in write_companion_note.py. Runtime validator imports VALID_WORKFLOWS at validate-time and asserts this enum stays in sync."
+      "description": "Must match VALID_WORKFLOWS in write_companion_note.py. Runtime validator imports VALID_WORKFLOWS at validate-time and asserts this enum stays in sync. Image: createframe/decgi/faceswap/style-transfer/multi-angle*/retexture/character-reference/2-pass/backfill/frame-capture. Video: i2v (image-to-video), t2v (text-to-video), v2v (video-to-video / restyle), lipsync (audio-driven lip animation), cinema-studio (Cinematic Studio multi-shot)."
+    },
+    "asset_id": {
+      "type": ["integer", "string"],
+      "description": "Gallery DB row id. Injected by the server's _fire_draft path (Issue #27) so the wrapper mutates the existing draft row in place instead of inserting a duplicate. Optional — agent-direct fires omit this and a new row is inserted. String form tolerated because some agents pass it as a stringified int."
     },
     "status": {
       "type": "string",
