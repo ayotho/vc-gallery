@@ -2068,8 +2068,13 @@ async function fillDrawer(id) {
              </svg>
            </button>`
         : '';
+      // Drag-out: when src is a fetchable URL, make the thumb draggable so the
+      // director can drop it directly into Higgsfield / Finder / chat upload
+      // boxes. Uses Chrome's DownloadURL MIME type to hand the target a real
+      // File handle (not just a URL string).
+      const dragAttrs = src ? `draggable="true" data-drag-url="${src}" data-drag-name="${safeName}"` : '';
       return `
-        <div class="ref-thumb" data-src="${src}" title="${safeName}">
+        <div class="ref-thumb" data-src="${src}" title="${safeName}" ${dragAttrs}>
           ${previewHtml}
           ${copyBtnHtml}
           <div class="ref-thumb-meta">
@@ -2323,6 +2328,30 @@ async function fillDrawer(id) {
       const src = el.dataset.src;
       if (src) window.open(src, '_blank');
     });
+    // Drag-out support: drop the ref straight into Higgsfield / Finder /
+    // chat upload boxes as a real File. Chrome's DownloadURL MIME type is
+    // the magic — Chrome fetches the URL while you drag and hands the drop
+    // target a File handle (not just a URL string). Other MIME types are
+    // fallbacks for targets that prefer paths over file payloads.
+    const dragUrl = el.dataset.dragUrl;
+    const dragName = el.dataset.dragName;
+    if (dragUrl) {
+      el.addEventListener('dragstart', (e) => {
+        try {
+          const absUrl = new URL(dragUrl, window.location.href).href;
+          const mime = (() => {
+            const ext = (dragName || '').toLowerCase().split('.').pop();
+            return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', mov: 'video/quicktime' })[ext] || 'application/octet-stream';
+          })();
+          // Chrome-specific: triggers a real File drop on supported targets.
+          e.dataTransfer.setData('DownloadURL', `${mime}:${dragName}:${absUrl}`);
+          // Fallbacks for other targets:
+          e.dataTransfer.setData('text/uri-list', absUrl);
+          e.dataTransfer.setData('text/plain', absUrl);
+          e.dataTransfer.effectAllowed = 'copy';
+        } catch {}
+      });
+    }
   });
 
   // Copy-ref-image to clipboard (PNG/JPEG/WebP bytes via Clipboard API).
