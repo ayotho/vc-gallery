@@ -2055,8 +2055,12 @@ async function fillDrawer(id) {
     const cards = resolved.slice(0, 12).map((r, i) => {
       const src = r.url || (r.kind === 'url' ? r.raw : '');
       const safeName = escapeHtml(r.filename || r.raw || '');
+      // draggable="false" on the img is critical: without it the browser's
+      // native image-drag (drags the image URL, not a File) fires first and
+      // shadows the parent .ref-thumb's dragstart. Disabling lets the parent
+      // div take over via DownloadURL → real File drop.
       const previewHtml = src
-        ? `<img class="ref-thumb-img" loading="lazy" src="${src}" alt="${safeName}" onerror="this.classList.add('broken')">`
+        ? `<img class="ref-thumb-img" loading="lazy" draggable="false" src="${src}" alt="${safeName}" onerror="this.classList.add('broken')">`
         : `<div class="ref-thumb-img broken"></div>`;
       // Copy button only when we have a fetchable URL — files via /ref?path=
       // and direct URLs both work. Skip for refs with no resolved src.
