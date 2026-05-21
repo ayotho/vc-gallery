@@ -529,6 +529,19 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .latest-toggle input { accent-color: var(--primary); }
 .scene-empty { padding: 40px 20px; text-align: center; color: #8a877f; font-size: 14px; }
 .scene-unassigned { margin-top: var(--s-xl); padding: 10px 14px; background: var(--surface-soft); border-radius: var(--r-md); font-size: 13px; color: #6f6c64; }
+/* Drag-to-reorder affordance on scene groups */
+.scenes-toolbar { display: flex; align-items: center; gap: 12px; margin: 0 0 var(--s-lg); padding: 8px 12px; background: var(--surface-soft); border-radius: var(--r-md); }
+.scenes-toolbar-hint { font-size: 12px; color: #6f6c64; font-weight: 440; }
+.scene-reset-order { margin-left: auto; font-size: 11px; font-weight: 540; color: var(--ink); background: var(--canvas); border: 1px solid var(--hairline); padding: 4px 10px; border-radius: var(--r-pill); cursor: pointer; font-family: var(--mono); letter-spacing: 0.3px; }
+.scene-reset-order:hover { background: var(--block-lime); }
+.scene-group { transition: opacity 0.15s; }
+.scene-group.dragging { opacity: 0.4; }
+.scene-group.drop-above { box-shadow: 0 -3px 0 0 var(--primary); }
+.scene-group.drop-below { box-shadow: 0 3px 0 0 var(--primary); }
+.scene-drag-handle { display: inline-block; cursor: grab; color: #b8b5ad; font-size: 16px; line-height: 1; user-select: none; margin-right: 2px; padding: 2px 4px; }
+.scene-drag-handle:hover { color: var(--ink); }
+.scene-group[draggable="true"] { cursor: default; }
+.scene-group[draggable="true"] .scene-header { user-select: none; }
 
 /* Fixes #21 — at S density (4+ cols), shrink badge to dot-only */
 body.density-s .badge { padding: 5px; gap: 0; font-size: 0; }
@@ -1141,17 +1154,13 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
   <!-- Body -->
   <div class="body" id="body">
 
-    <!-- Sidebar -->
+    <!-- Sidebar — section order reflects director usage frequency (2026-05-21):
+         Status (most) → Refinements → Shot IDs → Media → Sort → Source (least). -->
     <aside class="sidebar">
 
       <div class="side-group" id="filter-status-group">
         <div class="side-label">Status <span class="clear" data-clear="status">clear</span></div>
         <div id="filter-status"></div>
-      </div>
-
-      <div class="side-group" id="filter-source-group">
-        <div class="side-label">Source <span class="clear" data-clear="source_type">clear</span></div>
-        <div id="filter-source"></div>
       </div>
 
       <div class="side-group">
@@ -1196,6 +1205,11 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
           <option value="shot">Shot ID</option>
           <option value="model">Model</option>
         </select></div>
+      </div>
+
+      <div class="side-group" id="filter-source-group">
+        <div class="side-label">Source <span class="clear" data-clear="source_type">clear</span></div>
+        <div id="filter-source"></div>
       </div>
     </aside>
 
@@ -2715,6 +2729,47 @@ async function refreshFacets() {
   } catch {}
 }
 
+// Scene-tab custom ordering — persisted to localStorage.
+// Director can drag scene headers to reorder; saved order survives reloads.
+// Key includes client+project so multi-episode setups don't collide.
+const SCENE_ORDER_KEY = (() => {
+  try {
+    const url = new URL(window.location.href);
+    const c = url.searchParams.get('client') || 'default';
+    const p = url.searchParams.get('project') || 'default';
+    return `vc-gallery.scene-order.${c}.${p}`;
+  } catch { return 'vc-gallery.scene-order.default'; }
+})();
+
+function loadSceneOrder() {
+  try {
+    const raw = localStorage.getItem(SCENE_ORDER_KEY);
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr) && arr.every(s => typeof s === 'string')) return arr;
+  } catch {}
+  return null;
+}
+
+function saveSceneOrder(orderArr) {
+  try { localStorage.setItem(SCENE_ORDER_KEY, JSON.stringify(orderArr)); } catch {}
+}
+
+function applySceneOrder(scenes) {
+  const saved = loadSceneOrder();
+  if (!saved) return scenes;
+  const byKey = Object.fromEntries(scenes.map(s => [s.scene, s]));
+  const ordered = [];
+  for (const k of saved) {
+    if (byKey[k]) { ordered.push(byKey[k]); delete byKey[k]; }
+  }
+  // Append any new scenes that aren't in the saved order yet
+  for (const s of scenes) {
+    if (byKey[s.scene]) ordered.push(s);
+  }
+  return ordered;
+}
+
 async function loadScenesView() {
   const root = $('#scenes-root');
   root.innerHTML = '<div class="scene-empty">Loading scenes…</div>';
@@ -2729,6 +2784,7 @@ async function loadScenesView() {
     root.innerHTML = '<div class="scene-empty">No scenes found. Assign scenes to assets to see the overview.</div>';
     return;
   }
+  data.scenes = applySceneOrder(data.scenes);
   const html = data.scenes.map(s => {
     const renderBand = (label, cls, assets) => {
       if (!assets.length) return '';
@@ -2745,8 +2801,9 @@ async function loadScenesView() {
         <div class="scene-band-grid">${cards}</div>
       </div>`;
     };
-    return `<div class="scene-group">
+    return `<div class="scene-group" draggable="true" data-scene-id="${escapeHtml(s.scene)}">
       <div class="scene-header" data-scene="${escapeHtml(s.scene)}">
+        <span class="scene-drag-handle" title="Drag to reorder" aria-hidden="true">⠿</span>
         <h3>${escapeHtml(s.scene)}</h3>
         <div class="scene-counts">
           ${s.counts.hero ? `<span class="sc-hero">★ ${s.counts.hero} hero</span>` : ''}
@@ -2765,7 +2822,14 @@ async function loadScenesView() {
   const footer = data.unassigned_count
     ? `<div class="scene-unassigned">${data.unassigned_count} asset${data.unassigned_count !== 1 ? 's' : ''} with no scene assigned</div>`
     : '';
-  root.innerHTML = html + footer;
+  const customOrderBadge = loadSceneOrder()
+    ? `<button class="scene-reset-order" id="scene-reset-order" title="Reset to default API order (alphabetical)">↻ reset order</button>`
+    : '';
+  const toolbar = `<div class="scenes-toolbar">
+    <span class="scenes-toolbar-hint">Drag a scene header to reorder · order is saved automatically</span>
+    ${customOrderBadge}
+  </div>`;
+  root.innerHTML = toolbar + html + footer;
   // Click a card → open in drawer (same as grid)
   root.querySelectorAll('.scene-card').forEach(c => {
     c.addEventListener('click', () => selectAsset(Number(c.dataset.id)));
@@ -2782,6 +2846,65 @@ async function loadScenesView() {
       refresh();
     });
   });
+  // Drag-to-reorder scene groups. Order persists per client+project in localStorage.
+  let dragSrc = null;
+  root.querySelectorAll('.scene-group').forEach(g => {
+    g.addEventListener('dragstart', e => {
+      dragSrc = g;
+      g.classList.add('dragging');
+      try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', g.dataset.sceneId || ''); } catch {}
+    });
+    g.addEventListener('dragend', () => {
+      g.classList.remove('dragging');
+      root.querySelectorAll('.scene-group').forEach(x => x.classList.remove('drop-above', 'drop-below'));
+      // Persist current DOM order
+      const order = [...root.querySelectorAll('.scene-group')].map(x => x.dataset.sceneId).filter(Boolean);
+      saveSceneOrder(order);
+      // Refresh the reset button visibility without re-fetching
+      const tb = root.querySelector('.scenes-toolbar');
+      if (tb && !tb.querySelector('#scene-reset-order')) {
+        const btn = document.createElement('button');
+        btn.className = 'scene-reset-order';
+        btn.id = 'scene-reset-order';
+        btn.title = 'Reset to default API order (alphabetical)';
+        btn.textContent = '↻ reset order';
+        btn.addEventListener('click', () => {
+          try { localStorage.removeItem(SCENE_ORDER_KEY); } catch {}
+          loadScenesView();
+        });
+        tb.appendChild(btn);
+      }
+      dragSrc = null;
+    });
+    g.addEventListener('dragover', e => {
+      e.preventDefault();
+      if (!dragSrc || dragSrc === g) return;
+      const rect = g.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height / 2;
+      g.classList.toggle('drop-above', before);
+      g.classList.toggle('drop-below', !before);
+    });
+    g.addEventListener('dragleave', () => {
+      g.classList.remove('drop-above', 'drop-below');
+    });
+    g.addEventListener('drop', e => {
+      e.preventDefault();
+      if (!dragSrc || dragSrc === g) return;
+      const rect = g.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height / 2;
+      g.classList.remove('drop-above', 'drop-below');
+      if (before) g.parentNode.insertBefore(dragSrc, g);
+      else g.parentNode.insertBefore(dragSrc, g.nextSibling);
+    });
+  });
+  // Reset-order button
+  const resetBtn = root.querySelector('#scene-reset-order');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      try { localStorage.removeItem(SCENE_ORDER_KEY); } catch {}
+      loadScenesView();
+    });
+  }
 }
 
 // -------- Shots View (group by shot_id) -----------------------------------
