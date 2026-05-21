@@ -3414,7 +3414,7 @@ function bindScroll() {
 }
 
 // -------- Fires panel — live wrapper subprocess tracking -------------
-const firesState = { open: false, viewingPid: null, fires: [], pollTimer: null };
+const firesState = { open: false, viewingPid: null, fires: [], pollTimer: null, prevRunningPids: new Set() };
 
 function bindFires() {
   const pill = $('#btn-fires');
@@ -3498,6 +3498,22 @@ async function refreshFires(forceRender) {
   }
   // Update elapsed timers on firing cards in the grid
   updateFiringCardTimers(fires);
+  // Detect fire transitions: any pid that WAS running last poll but isn't now
+  // → the wrapper finished (success or failure). Re-fetch the grid so the
+  // cooking-state cards transition to their final rendered state.
+  // Fixes #66 — cooking card stuck after fire completes.
+  const nowRunning = new Set(fires.filter(f => f.state === 'running').map(f => f.pid));
+  let anyCompleted = false;
+  for (const pid of firesState.prevRunningPids) {
+    if (!nowRunning.has(pid)) { anyCompleted = true; break; }
+  }
+  firesState.prevRunningPids = nowRunning;
+  if (anyCompleted && typeof refresh === 'function') {
+    // Re-fetch the current grid page so completed fires render with their
+    // final status, thumbnail, size, etc. Lightweight — uses the existing
+    // request-version counter so it won't fight an in-flight user refresh.
+    refresh().catch(() => {});
+  }
   // Render list when panel open
   if (firesState.open && (forceRender || firesState.viewingPid === null)) renderFires();
   // If viewing a specific log, refresh that too
