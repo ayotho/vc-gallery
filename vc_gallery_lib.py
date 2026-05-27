@@ -209,6 +209,7 @@ CREATE INDEX IF NOT EXISTS idx_assets_filename ON assets(filename);
 CREATE INDEX IF NOT EXISTS idx_assets_thumb   ON assets(thumb_path);
 CREATE INDEX IF NOT EXISTS idx_assets_first_seen ON assets(first_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_workflow ON assets(workflow);
+CREATE INDEX IF NOT EXISTS idx_assets_media_type ON assets(media_type);
 CREATE INDEX IF NOT EXISTS idx_reviews_asset  ON reviews(asset_id, reviewed_at DESC);
 """
 
