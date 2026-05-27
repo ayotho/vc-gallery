@@ -1921,6 +1921,18 @@ def _edit_draft(asset_id: int, payload: dict) -> dict:
     # Allowed edits: replace payload, replace refs, replace prompt, edit cost
     if "payload" in payload:
         note_data["payload"] = payload["payload"]
+        # Re-resolve image refs from the new inner payload so thumbnails update
+        inner = payload["payload"]
+        image_refs: list[str] = []
+        for key in ("image", "start_image", "end_image", "video", "audio", "media", "refs"):
+            v = inner.get(key)
+            if v is None:
+                continue
+            if isinstance(v, list):
+                image_refs.extend([str(x) for x in v if x])
+            elif isinstance(v, str):
+                image_refs.append(v)
+        note_data["image_refs"] = image_refs
     if "image_refs" in payload:
         note_data["image_refs"] = payload["image_refs"]
     if "estimated_cost" in payload:
