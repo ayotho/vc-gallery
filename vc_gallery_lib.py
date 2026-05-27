@@ -521,6 +521,19 @@ def upsert_asset_direct(
     if source_type not in VALID_SOURCE_TYPES:
         source_type = classify_source_type(p.name, has_sidecar)
 
+    # Issue #58 — probe width/height/duration at write time so video metadata
+    # is populated immediately, not deferred to a manual rescan. Uses the same
+    # probe_media_dimensions from vc_gallery_scan (imported lazily to avoid
+    # circular import at module level). Skip if caller already provided dims.
+    _caller_w = metadata.get("width")
+    _caller_h = metadata.get("height")
+    _caller_d = metadata.get("duration_sec")
+    if _caller_w is not None and _caller_h is not None:
+        dims = {"width": _caller_w, "height": _caller_h, "duration_sec": _caller_d}
+    else:
+        from vc_gallery_scan import probe_media_dimensions as _probe
+        dims = _probe(str(p))
+
     row = {
         "file_path": str(p),
         "filename": p.name,
@@ -544,6 +557,9 @@ def upsert_asset_direct(
         "session_date": metadata.get("session_date") or None,
         "score": safe_float(metadata.get("score")),
         "notes": metadata.get("notes") or "",
+        "width": dims["width"],
+        "height": dims["height"],
+        "duration_sec": dims["duration_sec"],
     }
 
     # Issue #27 — asset_id-keyed mutate path for draft→fire. Server passes the
