@@ -692,6 +692,62 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .ref-copy-btn.busy { opacity: 1; }
 .ref-copy-btn.error { opacity: 1; background: #fceaea; color: #8e2727; }
 
+/* Remove-ref X button — only shown on draft assets. Mirrors copy-btn position
+   (top-left vs top-right) so the two never collide on hover. */
+.ref-remove-btn {
+  position: absolute; top: 6px; left: 6px; z-index: 2;
+  width: 22px; height: 22px; border-radius: var(--r-full);
+  background: rgba(255,255,255,0.92); color: #8e2727;
+  border: 1px solid rgba(0,0,0,0.08); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity 120ms ease, transform 120ms ease, background 120ms ease;
+  backdrop-filter: blur(4px);
+  font-family: var(--mono); font-size: 13px; font-weight: 600; line-height: 1;
+}
+.ref-thumb:hover .ref-remove-btn,
+.ref-remove-btn:focus-visible { opacity: 1; }
+.ref-remove-btn:hover { background: #fceaea; transform: scale(1.08); }
+.ref-remove-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+
+/* Draft preview placeholder — used in the BIG drawer media area when an asset
+   is a draft (no rendered media file yet). Replaces the broken <img> that
+   would otherwise try to load the .draft.json file as an image. */
+.draft-preview-placeholder {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px;
+  background: linear-gradient(135deg, #1a1a1d 0%, #2a2a2f 100%);
+  color: rgba(255,255,255,0.86);
+  padding: 24px;
+  text-align: center;
+}
+.draft-preview-placeholder .dpp-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px; border-radius: var(--r-pill);
+  background: rgba(255,255,255,0.12); color: #fff;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.draft-preview-placeholder .dpp-badge .dpp-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #b6f25b; box-shadow: 0 0 8px #b6f25b;
+}
+.draft-preview-placeholder .dpp-title {
+  font-family: var(--mono); font-size: 15px; letter-spacing: 0.5px;
+  color: rgba(255,255,255,0.94); max-width: 80%;
+  word-break: break-word; line-height: 1.4;
+}
+.draft-preview-placeholder .dpp-meta {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.3px;
+  color: rgba(255,255,255,0.55);
+}
+.draft-preview-placeholder .dpp-ref-bg {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; opacity: 0.18; filter: blur(8px) saturate(0.6);
+  pointer-events: none; z-index: 0;
+}
+.draft-preview-placeholder > * { position: relative; z-index: 1; }
+
 /* Draft mode styling */
 .draft-banner {
   display: flex; align-items: center; gap: 10px;
@@ -1015,6 +1071,15 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .vs-card:hover { border-color: var(--primary); }
 .vs-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
 .vs-card .vs-video-mark { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 16px; color: rgba(255,255,255,0.8); pointer-events: none; }
+.vs-card .vs-draft-placeholder {
+  width: 100%; aspect-ratio: 16/9;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #1a1a1d 0%, #2a2a2f 100%);
+  color: rgba(255,255,255,0.78);
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.5px;
+  text-transform: uppercase; text-align: center;
+  padding: 6px; overflow: hidden;
+}
 .vs-meta { padding: 4px 6px; display: flex; align-items: center; gap: 4px; }
 .vs-badge { font-size: 9px; font-weight: 540; padding: 1px 5px; border-radius: var(--r-pill); white-space: nowrap; }
 .vs-model { font-size: 10px; color: #8a877f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -2011,8 +2076,25 @@ async function fillDrawer(id) {
   }
   // Preview
   const preview = $('#preview');
-  preview.querySelectorAll('img, video').forEach(el => el.remove());
-  if (asset.media_type === 'video') {
+  preview.querySelectorAll('img, video, .draft-preview-placeholder').forEach(el => el.remove());
+  const isDraftPreview = asset.status === 'draft' || asset.status === 'firing';
+  if (isDraftPreview) {
+    // Drafts have no rendered media yet — render a styled placeholder instead
+    // of trying to load the .draft.json file as an image (which 500s and shows
+    // a broken icon). Uses first ref image as a blurred backdrop if available
+    // so the card has visual context.
+    const firstRefSrc = (asset.refs_resolved && asset.refs_resolved[0] && asset.refs_resolved[0].url) || '';
+    const refsCount = (asset.refs_resolved || []).length;
+    const placeholder = document.createElement('div');
+    placeholder.className = 'draft-preview-placeholder';
+    placeholder.innerHTML = `
+      ${firstRefSrc ? `<img class="dpp-ref-bg" src="${escapeHtml(firstRefSrc)}" alt="" onerror="this.remove()">` : ''}
+      <span class="dpp-badge"><span class="dpp-dot"></span>${asset.status === 'firing' ? 'FIRING' : 'DRAFT'}</span>
+      <div class="dpp-title">${escapeHtml(asset.filename || asset.shot_id || 'Untitled draft')}</div>
+      <div class="dpp-meta">${escapeHtml(asset.model || 'model TBD')}${refsCount ? ' · ' + refsCount + ' ref' + (refsCount === 1 ? '' : 's') : ' · no refs'}</div>
+    `;
+    preview.prepend(placeholder);
+  } else if (asset.media_type === 'video') {
     const v = document.createElement('video');
     v.id = 'drawer-video';
     v.controls = true;
@@ -2099,9 +2181,17 @@ async function fillDrawer(id) {
       // boxes. Uses Chrome's DownloadURL MIME type to hand the target a real
       // File handle (not just a URL string).
       const dragAttrs = src ? `draggable="true" data-drag-url="${src}" data-drag-name="${safeName}"` : '';
+      // Remove-ref X button — only shown on drafts so the director can prune
+      // a ref before firing. The raw path/url stored on the button lets the
+      // handler match against payload arrays (image / start_image / refs etc).
+      const rawRef = r.raw || src || '';
+      const removeBtnHtml = isDraft && rawRef
+        ? `<button class="ref-remove-btn" data-ref-raw="${escapeHtml(rawRef)}" data-ref-index="${i}" title="Remove this reference" aria-label="Remove reference">×</button>`
+        : '';
       return `
         <div class="ref-thumb" data-src="${src}" title="${safeName}" ${dragAttrs}>
           ${previewHtml}
+          ${removeBtnHtml}
           ${copyBtnHtml}
           <div class="ref-thumb-meta">
             <span class="ref-num">${String(i + 1).padStart(2, '0')}</span>
@@ -2422,6 +2512,64 @@ async function fillDrawer(id) {
     });
   });
 
+  // Remove-ref handler (drafts only — button not rendered for other statuses).
+  // Strips the matching raw path/url from EVERY array key in payload (image,
+  // start_image, end_image, video, audio, media, refs). PUT /api/draft/{id}
+  // re-resolves image_refs from the updated payload (see vc_gallery_serve.py
+  // _edit_draft fix b202e22), so we don't need to send image_refs separately.
+  body.querySelectorAll('.ref-remove-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const rawRef = btn.dataset.refRaw;
+      if (!rawRef) return;
+      if (!asset.draft || !asset.draft.payload) {
+        flashToast('No draft payload to edit', 'error');
+        return;
+      }
+      btn.disabled = true;
+      // Build a new payload with the ref removed from every array/scalar key.
+      const REF_KEYS = ['image', 'start_image', 'end_image', 'video', 'audio', 'media', 'refs'];
+      const newPayload = { ...asset.draft.payload };
+      let removed = false;
+      for (const k of REF_KEYS) {
+        const v = newPayload[k];
+        if (Array.isArray(v)) {
+          const filtered = v.filter(x => String(x) !== String(rawRef));
+          if (filtered.length !== v.length) {
+            removed = true;
+            newPayload[k] = filtered.length ? filtered : undefined;
+          }
+        } else if (typeof v === 'string' && v === rawRef) {
+          removed = true;
+          newPayload[k] = undefined;
+        }
+      }
+      // Drop undefined keys cleanly so wrapper doesn't see them
+      for (const k of REF_KEYS) {
+        if (newPayload[k] === undefined) delete newPayload[k];
+      }
+      if (!removed) {
+        flashToast('Could not locate that ref in the draft payload', 'error');
+        btn.disabled = false;
+        return;
+      }
+      try {
+        await api(`/api/draft/${asset.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payload: newPayload }),
+        });
+        flashToast('Reference removed');
+        // Reload the drawer so refs_resolved + preview refresh
+        await fillDrawer(asset.id);
+      } catch (err) {
+        btn.disabled = false;
+        flashToast('Remove failed: ' + (err && err.message ? err.message : String(err)), 'error');
+      }
+    });
+  });
+
   // Draft action buttons
   const fireBtn = $('#btn-fire-draft');
   if (fireBtn) {
@@ -2477,9 +2625,20 @@ async function fillDrawer(id) {
           + siblings.map(s => {
             const st = STATUSES.find(x => x.key === s.status) || STATUSES[0];
             const isVideo = s.media_type === 'video';
+            const isSibDraft = s.status === 'draft' || s.status === 'firing';
+            // Draft siblings have no rendered media — use first ref as thumb
+            // when available, fall back to a labelled placeholder. Either way
+            // never let the broken /thumb/...jpg (HTTP 500 on missing source)
+            // render as a broken-image icon.
+            const sibFirstRef = (s.refs_resolved && s.refs_resolved[0] && s.refs_resolved[0].url) || '';
+            const thumbHtml = isSibDraft
+              ? (sibFirstRef
+                  ? '<img src="' + escapeHtml(sibFirstRef) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">'
+                  : '<div class="vs-draft-placeholder">' + escapeHtml(s.model || 'draft') + '</div>')
+              : '<img src="' + escapeHtml(s.thumb_url || '') + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">';
             return '<div class="vs-card" data-id="' + s.id + '">'
-              + '<img src="' + escapeHtml(s.thumb_url || '') + '" alt="" loading="lazy">'
-              + (isVideo ? '<span class="vs-video-mark">&#9654;</span>' : '')
+              + thumbHtml
+              + (isVideo && !isSibDraft ? '<span class="vs-video-mark">&#9654;</span>' : '')
               + '<div class="vs-meta">'
               + '<span class="vs-badge" style="background:' + st.swatch + ';color:' + (st.dark ? '#fff' : '#222') + '">' + st.label + '</span>'
               + '<span class="vs-model">' + escapeHtml(s.model || '') + (s.pass_num ? ' v' + s.pass_num : '') + '</span>'
