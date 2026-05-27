@@ -2967,6 +2967,15 @@ class Handler(BaseHTTPRequestHandler):
             if match is None:
                 self._send_error_json(404, "thumbnail not found")
                 return
+            if not Path(match["file_path"]).exists():
+                row_status = STATE.conn().execute(
+                    "SELECT status FROM assets WHERE id = ?", (match["id"],)
+                ).fetchone()
+                if row_status and row_status["status"] == "draft":
+                    self._serve_draft_placeholder()
+                    return
+                self._send_error_json(404, "source file missing")
+                return
             name2 = thumb_mod.ensure_thumb(match["file_path"], STATE.thumb_dir)
             if not name2:
                 self._send_error_json(500, "thumbnail generation failed")
@@ -2977,6 +2986,24 @@ class Handler(BaseHTTPRequestHandler):
             )
             target = STATE.thumb_dir / name2
         self._send_file(target)
+
+    _DRAFT_SVG = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270" viewBox="0 0 480 270">'
+        b'<rect width="480" height="270" fill="#23232a"/>'
+        b'<text x="240" y="125" text-anchor="middle" font-family="system-ui,sans-serif" '
+        b'font-size="28" font-weight="600" fill="#888" letter-spacing="6">DRAFT</text>'
+        b'<path d="M228 155 l4 20 l20-4 l16-16 l-20-20 l-16 16z M252 139 l4-4 a3 3 0 0 1 4 0'
+        b' l16 16 a3 3 0 0 1 0 4 l-4 4z" fill="none" stroke="#666" stroke-width="1.5"/>'
+        b'</svg>'
+    )
+
+    def _serve_draft_placeholder(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "image/svg+xml")
+        self.send_header("Content-Length", str(len(self._DRAFT_SVG)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(self._DRAFT_SVG)
 
     def _serve_media(self, asset_id: int) -> None:
         row = STATE.conn().execute(

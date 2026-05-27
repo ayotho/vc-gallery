@@ -123,6 +123,7 @@ def ensure_thumb(source_path: str | Path, cache_dir: str | Path) -> str | None:
     """Make sure a thumbnail exists. Returns the thumb basename, or None on failure."""
     src = Path(source_path)
     if not src.exists():
+        print(f"[thumb] source missing, skipping: {src}", file=sys.stderr)
         return None
 
     ext = src.suffix.lower()

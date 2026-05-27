@@ -120,10 +120,9 @@ def clean_missing_rows(gallery: Path, db: Path, *, apply: bool) -> dict:
     conn.row_factory = sqlite3.Row
     removed: list[dict] = []
     try:
-        # Drafts use synthetic .drafts/*.draft.json paths — exclude them
         rows = conn.execute(
             "SELECT id, filename, file_path, status FROM assets "
-            "WHERE file_path LIKE ? AND status != 'draft'",
+            "WHERE file_path LIKE ?",
             (f"{gallery_str}%",),
         ).fetchall()
         for r in rows:

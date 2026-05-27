@@ -354,7 +354,7 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .card.stacked::before { transform: translate(3px, -3px); opacity: 0.7; }
 .card.stacked::after { transform: translate(6px, -6px); opacity: 0.4; }
 .stack-badge {
-  position: absolute; bottom: 6px; right: 6px; z-index: 3;
+  position: absolute; top: 6px; left: 6px; z-index: 3;
   background: rgba(0,0,0,0.7); color: #fff; font-size: 10px; font-weight: 600;
   padding: 2px 6px; border-radius: var(--r-pill); font-family: var(--mono);
   backdrop-filter: blur(4px);
@@ -547,12 +547,12 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .video-mark { position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; border-radius: var(--r-full); background: rgba(255,255,255,0.92); backdrop-filter: blur(4px); display: inline-flex; align-items: center; justify-content: center; color: var(--ink); }
 .duration { position: absolute; bottom: 10px; right: 10px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.3px; background: rgba(255,255,255,0.92); color: var(--ink); padding: 3px 8px; border-radius: var(--r-pill); }
 
-.card-foot { display: flex; align-items: center; justify-content: space-between; padding: 10px 4px 0; font-size: 13px; font-weight: 480; letter-spacing: -0.14px; gap: 8px; }
+.card-foot { display: flex; align-items: center; justify-content: space-between; padding: 10px 4px 0; font-size: 13px; font-weight: 480; letter-spacing: -0.14px; gap: 8px; overflow: hidden; }
 /* shot-id can be long (e.g. SH700_dave_extended_v3) — ellipsis when card
    narrows. Combined with min-width:0 on the flex parent, the label
    shrinks gracefully instead of overflowing the card frame. */
 .shot-id { font-family: var(--mono); letter-spacing: 0.2px; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.card-meta { font-family: var(--mono); font-size: 11px; color: #6f6c64; letter-spacing: 0.3px; text-transform: uppercase; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-meta { font-family: var(--mono); font-size: 11px; color: #6f6c64; letter-spacing: 0.3px; text-transform: uppercase; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex-shrink: 1; }
 .card-meta .raw { color: #b07f3e; }
 
 .quick { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; gap: 6px; opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; }
@@ -1474,6 +1474,13 @@ function epLabel(folder) {
   return name;
 }
 
+function fmtDuration(sec) {
+  if (sec < 60) return sec.toFixed(1) + 's';
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return m + ':' + String(s).padStart(2, '0');
+}
+
 function fmtBytes(n) {
   if (!n) return '';
   const u = ['B','KB','MB','GB'];
@@ -1690,6 +1697,7 @@ function cardEl(asset, idx) {
         <span class="badge" data-status="${escapeHtml(asset.status)}"><span class="dot"></span>${escapeHtml(status.label)}</span>
         ${asset._stack ? `<span class="stack-badge${asset._stack.needsAttention ? ' attention' : ''}">${asset._stack.count}v</span>` : ''}
         ${isVideo && !isDraftCard ? '<span class="video-mark"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M3 1.5 L8 5 L3 8.5 Z" fill="currentColor"/></svg></span>' : ''}
+        ${isVideo && asset.duration_sec ? `<span class="duration">${fmtDuration(asset.duration_sec)}</span>` : ''}
         <span class="card-id-chip" data-copy-id="${asset.id}" title="Click to copy #${asset.id}">#${asset.id}</span>
         <div class="quick">
           <button data-q="accepted" title="Accept">A</button>
@@ -2622,15 +2630,24 @@ async function patchAsset(id, payload) {
     const idx = state.items.findIndex(a => a.id === id);
     if (idx >= 0) {
       state.items[idx] = { ...state.items[idx], ...updated };
-      // Re-render that single card
+      const statusFilter = state.filters.status;
+      const shouldRemove = statusFilter && updated.status && updated.status !== statusFilter;
       const old = $(`.card[data-id="${id}"]`);
-      if (old) {
+      if (shouldRemove) {
+        if (old) old.remove();
+        state.items.splice(idx, 1);
+        state.total = Math.max(0, (state.total || 0) - 1);
+        renderCanvasHead();
+      } else if (old) {
         const fresh = cardEl(state.items[idx], idx);
         old.replaceWith(fresh);
       }
     }
-    if (id === state.selectedId) await fillDrawer(id);
-    // Update facets in background (status count may have shifted)
+    if (id === state.selectedId) {
+      const stillPresent = state.items.some(a => a.id === id);
+      if (stillPresent) await fillDrawer(id);
+      else closeDrawer();
+    }
     refreshFacets();
     return updated;
   } catch (e) {
@@ -2651,6 +2668,25 @@ async function openInFinder(id) {
   } catch (e) {
     flashToast(e.message, 'error');
   }
+}
+
+function syncUrlToFilters() {
+  const p = new URLSearchParams();
+  const f = state.filters;
+  if (f.status) p.set('status', f.status);
+  if (f.source_type) p.set('source_type', f.source_type);
+  if (f.model) p.set('model', f.model);
+  if (f.workflow) p.set('workflow', f.workflow);
+  if (f.scene) p.set('scene', f.scene);
+  if (f.shot_id) p.set('shot_id', f.shot_id);
+  if (f.media_type) p.set('media_type', f.media_type);
+  if (f.has_prompt) p.set('has_prompt', '1');
+  if (f.has_sidecar) p.set('has_sidecar', '1');
+  if (f.q) p.set('q', f.q);
+  if (state.sort && state.sort !== 'recent') p.set('sort', state.sort);
+  const qs = p.toString();
+  const url = qs ? `${location.pathname}?${qs}` : location.pathname;
+  history.replaceState(null, '', url);
 }
 
 // -------- Loading -----------------------------------------------------
@@ -2692,6 +2728,7 @@ async function refresh() {
   renderCanvasHead(); renderFilterBreadcrumb();
   renderStatusFilters();
   renderSourceFilters();
+  syncUrlToFilters();
   // If the previously selected asset isn't in the new result set, close
   // the drawer instead of leaving stale content behind.
   if (state.selectedId && !state.items.some(a => a.id === state.selectedId)) {
@@ -3870,6 +3907,15 @@ function navigateLightbox(delta) {
     $('#sort-label').textContent = sortEl.selectedOptions[0]?.textContent || 'Most recent';
   }
 
+  // Hydrate filters from URL query params so links like ?media_type=video work
+  const _qs = new URLSearchParams(window.location.search);
+  ['status','source_type','model','workflow','scene','shot_id','media_type','q'].forEach(k => {
+    if (_qs.has(k)) state.filters[k] = _qs.get(k);
+  });
+  if (_qs.get('has_prompt') === '1') state.filters.has_prompt = true;
+  if (_qs.get('has_sidecar') === '1') state.filters.has_sidecar = true;
+  if (_qs.has('sort')) state.sort = _qs.get('sort');
+
   try {
     await refreshFolder();
     await refreshFacets();
@@ -3968,6 +4014,20 @@ function navigateLightbox(delta) {
       e.stopPropagation();
     }
   });
+
+  // Sync UI controls to URL-hydrated filter state
+  if (state.filters.q) $('#search').value = state.filters.q;
+  if (state.filters.media_type) {
+    $$('#filter-media button').forEach(b => {
+      b.classList.toggle('active', b.dataset.media === state.filters.media_type);
+    });
+  }
+  if (state.filters.has_prompt) $('#toggle-prompt')?.classList.add('on');
+  if (state.filters.has_sidecar) $('#toggle-sidecar')?.classList.add('on');
+  if (state.sort !== 'recent') {
+    const sortEl = $('#sort');
+    if (sortEl) { sortEl.value = state.sort; $('#sort-label').textContent = sortEl.selectedOptions[0]?.textContent || state.sort; }
+  }
 
   await refresh();
 
