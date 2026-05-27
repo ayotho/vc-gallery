@@ -516,6 +516,10 @@ class State:
         backfilled = self._backfill_shot_ids()
         if backfilled:
             counts["shot_ids_backfilled"] = backfilled
+        # Auto-stack variants and propagate metadata from v1
+        stacked = self._auto_stack_variants()
+        if stacked:
+            counts["variants_stacked"] = stacked
         return counts
 
     def _backfill_shot_ids(self) -> int:
@@ -538,6 +542,68 @@ class State:
                 batch.append((shot, r["id"]))
         if batch:
             conn.executemany("UPDATE assets SET shot_id = ? WHERE id = ?", batch)
+            conn.commit()
+        return len(batch)
+
+    def _auto_stack_variants(self) -> int:
+        """Assign stack_id to assets with _v<N> suffixes and propagate
+        shot_id/scene from the v1 variant to later versions."""
+        conn = self.conn()
+        rows = conn.execute(
+            "SELECT id, filename, file_path, stack_id, shot_id, scene, model "
+            "FROM assets WHERE stack_id IS NULL"
+        ).fetchall()
+        if not rows:
+            return 0
+        batch = []
+        for r in rows:
+            stem = Path(r["file_path"]).stem
+            base, ver = lib.strip_variant_suffix(stem)
+            if ver is not None:
+                batch.append((base, r["id"]))
+        if batch:
+            conn.executemany("UPDATE assets SET stack_id = ? WHERE id = ?", batch)
+
+        # Propagate shot_id and scene from v1 (lowest version) to siblings
+        stacks = conn.execute(
+            "SELECT DISTINCT stack_id FROM assets WHERE stack_id IS NOT NULL"
+        ).fetchall()
+        propagated = 0
+        for s in stacks:
+            sid = s["stack_id"]
+            members = conn.execute(
+                "SELECT id, filename, shot_id, scene FROM assets WHERE stack_id = ? ORDER BY filename ASC",
+                (sid,),
+            ).fetchall()
+            if not members:
+                continue
+            source_shot = None
+            source_scene = None
+            for m in members:
+                if m["shot_id"]:
+                    source_shot = m["shot_id"]
+                if m["scene"]:
+                    source_scene = m["scene"]
+                if source_shot and source_scene:
+                    break
+            if not source_shot and not source_scene:
+                continue
+            for m in members:
+                updates = []
+                vals = []
+                if source_shot and not m["shot_id"]:
+                    updates.append("shot_id = ?")
+                    vals.append(source_shot)
+                if source_scene and not m["scene"]:
+                    updates.append("scene = ?")
+                    vals.append(source_scene)
+                if updates:
+                    vals.append(m["id"])
+                    conn.execute(
+                        f"UPDATE assets SET {', '.join(updates)} WHERE id = ?", vals
+                    )
+                    propagated += 1
+        if batch or propagated:
             conn.commit()
         return len(batch)
 
@@ -653,7 +719,7 @@ WATCHER = FolderWatcher(STATE)
 VALID_FILTERS = {
     "status", "source_type", "model", "workflow", "shot_id", "scene",
     "media_type", "client", "project", "has_sidecar",
-    "parent_filename", "pass_num",
+    "parent_filename", "pass_num", "stack_id",
 }
 
 
@@ -707,6 +773,8 @@ def _row_to_asset(row: sqlite3.Row, thumb_dir: Path) -> dict:
         "session": row["session"],
         "session_date": row["session_date"],
         "score": row["score"],
+        "stack_id": row["stack_id"],
+        "has_audio": bool(row["has_audio"]) if row["has_audio"] is not None else None,
         "notes": row["notes"] or "",
         "tags": json.loads(row["tags_json"]) if row["tags_json"] else [],
         "thumb_url": f"/thumb/{thumb_name}",

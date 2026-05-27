@@ -166,6 +166,9 @@ CREATE TABLE IF NOT EXISTS assets (
     session_date TEXT,
     score REAL,
 
+    stack_id TEXT,
+    has_audio INTEGER,
+
     notes TEXT DEFAULT '',
     tags_json TEXT,
 
@@ -210,6 +213,7 @@ CREATE INDEX IF NOT EXISTS idx_assets_thumb   ON assets(thumb_path);
 CREATE INDEX IF NOT EXISTS idx_assets_first_seen ON assets(first_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_workflow ON assets(workflow);
 CREATE INDEX IF NOT EXISTS idx_assets_media_type ON assets(media_type);
+CREATE INDEX IF NOT EXISTS idx_assets_stack_id ON assets(stack_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_asset  ON reviews(asset_id, reviewed_at DESC);
 """
 
@@ -246,6 +250,16 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
         "UPDATE assets SET first_seen_at = COALESCE(last_updated_at, file_modified_at, strftime('%s','now')) "
         "WHERE first_seen_at IS NULL"
     )
+    # Migration: add stack_id column for variant auto-stacking (#73)
+    try:
+        conn.execute("ALTER TABLE assets ADD COLUMN stack_id TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    # Migration: add has_audio column for video audio detection (#60)
+    try:
+        conn.execute("ALTER TABLE assets ADD COLUMN has_audio INTEGER")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     return conn
 
 
@@ -398,6 +412,18 @@ def classify_source_type(filename: str, has_sidecar: bool) -> str:
 # ---------------------------------------------------------------------------
 # Hashing — stable cache key for thumbnails
 # ---------------------------------------------------------------------------
+
+_VARIANT_SUFFIX_RE = re.compile(r'_v(\d+)$', re.IGNORECASE)
+
+
+def strip_variant_suffix(stem: str) -> tuple[str, int | None]:
+    """Strip a trailing _v<N> suffix from a filename stem.
+    Returns (base_stem, version_number) or (stem, None) if no match."""
+    m = _VARIANT_SUFFIX_RE.search(stem)
+    if m:
+        return stem[:m.start()], int(m.group(1))
+    return stem, None
+
 
 def thumb_key(file_path: str) -> str:
     """SHA1 of the absolute path. Used as the thumbnail cache filename stem."""
@@ -561,6 +587,8 @@ def upsert_asset_direct(
         "width": dims["width"],
         "height": dims["height"],
         "duration_sec": dims["duration_sec"],
+        "stack_id": metadata.get("stack_id") or None,
+        "has_audio": metadata.get("has_audio"),
     }
 
     # Issue #27 — asset_id-keyed mutate path for draft→fire. Server passes the
