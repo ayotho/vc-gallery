@@ -577,6 +577,20 @@ def scan(
                     source_type=row["source_type"],
                 )
 
+        orphan_drafts = conn.execute(
+            "SELECT id, file_path FROM assets WHERE status = 'draft' AND file_path LIKE ?",
+            (str(source.resolve()) + "%",),
+        ).fetchall()
+        orphan_count = 0
+        for od in orphan_drafts:
+            if not Path(od["file_path"]).exists():
+                conn.execute("DELETE FROM assets WHERE id = ?", (od["id"],))
+                conn.execute("DELETE FROM prompts WHERE asset_id = ?", (od["id"],))
+                orphan_count += 1
+        counts["orphan_drafts_removed"] = orphan_count
+        if orphan_count and not quiet:
+            print(f"removed {orphan_count} orphan draft rows (source missing)", file=sys.stderr)
+
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
