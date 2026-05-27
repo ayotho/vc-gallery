@@ -394,6 +394,9 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .compare-card .cc-actions button:hover { border-color: #888; }
 .compare-card .cc-actions .cc-hero { background: var(--block-lime); border-color: transparent; color: #222; }
 .compare-card .cc-actions .cc-accept { background: var(--block-mint); border-color: transparent; color: #222; }
+.compare-card .cc-audio-toggle { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; border-radius: var(--r-full); background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); border: none; color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0.7; transition: opacity .15s; z-index: 2; }
+.compare-card .cc-audio-toggle:hover { opacity: 1; }
+.compare-card .cc-audio-toggle.unmuted { background: rgba(255,255,255,0.92); color: var(--ink); opacity: 1; }
 
 /* Shots view */
 /* Asset-ID chip in drawer header — small mono pill so director can quote "#2095" in chat */
@@ -546,6 +549,9 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 
 .video-mark { position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; border-radius: var(--r-full); background: rgba(255,255,255,0.92); backdrop-filter: blur(4px); display: inline-flex; align-items: center; justify-content: center; color: var(--ink); }
 .duration { position: absolute; bottom: 10px; right: 10px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.3px; background: rgba(255,255,255,0.92); color: var(--ink); padding: 3px 8px; border-radius: var(--r-pill); }
+.audio-badge { position: absolute; top: 10px; left: 10px; width: 26px; height: 26px; border-radius: var(--r-full); background: rgba(255,255,255,0.92); backdrop-filter: blur(4px); display: inline-flex; align-items: center; justify-content: center; }
+.audio-badge svg { width: 13px; height: 13px; }
+.audio-badge.silent svg { color: #999; }
 
 .card-foot { display: flex; align-items: center; justify-content: space-between; padding: 10px 4px 0; font-size: 13px; font-weight: 480; letter-spacing: -0.14px; gap: 8px; overflow: hidden; }
 /* shot-id can be long (e.g. SH700_dave_extended_v3) — ellipsis when card
@@ -1697,6 +1703,7 @@ function cardEl(asset, idx) {
         <span class="badge" data-status="${escapeHtml(asset.status)}"><span class="dot"></span>${escapeHtml(status.label)}</span>
         ${asset._stack ? `<span class="stack-badge${asset._stack.needsAttention ? ' attention' : ''}">${asset._stack.count}v</span>` : ''}
         ${isVideo && !isDraftCard ? '<span class="video-mark"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M3 1.5 L8 5 L3 8.5 Z" fill="currentColor"/></svg></span>' : ''}
+        ${isVideo && asset.has_audio === true ? '<span class="audio-badge" title="Has audio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></span>' : ''}${isVideo && asset.has_audio === false ? '<span class="audio-badge silent" title="Silent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg></span>' : ''}
         ${isVideo && asset.duration_sec ? `<span class="duration">${fmtDuration(asset.duration_sec)}</span>` : ''}
         <span class="card-id-chip" data-copy-id="${asset.id}" title="Click to copy #${asset.id}">#${asset.id}</span>
         <div class="quick">
@@ -2957,6 +2964,7 @@ async function openCompare(ids) {
     const isVideo = a.media_type === 'video';
     const mediaEl = isVideo
       ? `<video src="${escapeHtml(a.media_url || '')}" controls loop muted playsinline preload="metadata" style="max-width:100%;max-height:100%;object-fit:contain"></video>`
+        + `<button class="cc-audio-toggle" data-muted="true" title="Click to unmute (solo)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg></button>`
       : `<img src="${escapeHtml(a.thumb_url || '')}" alt="" style="max-width:100%;max-height:100%;object-fit:contain">`;
     const isHero = a.status === 'hero';
     return `<div class="compare-card ${isHero ? 'compare-hero' : ''}" data-id="${a.id}">
@@ -2985,6 +2993,28 @@ async function openCompare(ids) {
       flashToast(`Marked ${target}`);
       // Refresh compare view
       openCompare(ids);
+    });
+  });
+
+  // Solo-audio: click speaker icon to unmute that clip, mute all others
+  const svgMuted = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>';
+  const svgUnmuted = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>';
+  strip.querySelectorAll('.cc-audio-toggle').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const card = btn.closest('.compare-card');
+      const vid = card.querySelector('video');
+      if (!vid) return;
+      const wasMuted = vid.muted;
+      strip.querySelectorAll('.compare-card video').forEach(v => { v.muted = true; });
+      strip.querySelectorAll('.cc-audio-toggle').forEach(b => { b.classList.remove('unmuted'); b.innerHTML = svgMuted; b.dataset.muted = 'true'; b.title = 'Click to unmute (solo)'; });
+      if (wasMuted) {
+        vid.muted = false;
+        btn.classList.add('unmuted');
+        btn.innerHTML = svgUnmuted;
+        btn.dataset.muted = 'false';
+        btn.title = 'Click to mute';
+      }
     });
   });
 }
