@@ -55,6 +55,7 @@ ASSET_COLUMNS = [
     "pass_num", "variant", "client", "project",
     "parent_filename", "session", "session_date", "score",
     "width", "height", "duration_sec",
+    "stack_id", "has_audio",
 ]
 
 import re as _re
@@ -126,6 +127,29 @@ def probe_media_dimensions(media_path) -> dict:
         # ffprobe missing on this machine — log once at first miss elsewhere
         return out
     return out
+
+
+def probe_has_audio(media_path) -> bool | None:
+    """Check whether a media file contains an audio stream via ffprobe.
+    Returns True/False, or None on probe failure."""
+    import subprocess as _subprocess
+    p = Path(media_path)
+    try:
+        if p.stat().st_size == 0 or ".tmp." in p.name:
+            return None
+    except OSError:
+        return None
+    if p.suffix.lower() not in lib.VIDEO_EXTS:
+        return None
+    try:
+        res = _subprocess.run(
+            ['ffprobe', '-v', 'quiet', '-select_streams', 'a:0',
+             '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', str(p)],
+            capture_output=True, text=True, timeout=10,
+        )
+        return bool(res.stdout.strip())
+    except (_subprocess.TimeoutExpired, _subprocess.SubprocessError, FileNotFoundError):
+        return None
 
 
 def _iter_media_files(source: Path, recurse: bool):
@@ -208,6 +232,8 @@ def _row_for(media: Path, sidecar: Path | None) -> tuple[dict, dict | None]:
         "width": None,
         "height": None,
         "duration_sec": None,
+        "stack_id": None,
+        "has_audio": None,
     }
 
     prompt_row = None
@@ -223,16 +249,12 @@ def _row_for(media: Path, sidecar: Path | None) -> tuple[dict, dict | None]:
 
 
 def _existing_fingerprint(conn, file_path: str) -> tuple | None:
-    """Return (id, size_bytes, file_modified_at, source_type, model, width, height, duration_sec)
-    for a known asset, else None. Width/height/duration returned so that
-    _upsert_asset can decide whether to skip the expensive ffprobe call —
-    if the file is unchanged AND we already have its dimensions, we don't
-    probe again. Source/model returned so a re-scan doesn't downgrade a
-    `generated` row that the wrapper wrote directly to DB.
+    """Return (id, size_bytes, file_modified_at, source_type, model, width, height, duration_sec, stack_id, has_audio)
+    for a known asset, else None.
     """
     cur = conn.execute(
         "SELECT id, size_bytes, file_modified_at, source_type, model, "
-        "width, height, duration_sec FROM assets WHERE file_path = ?",
+        "width, height, duration_sec, stack_id, has_audio FROM assets WHERE file_path = ?",
         (file_path,),
     )
     r = cur.fetchone()
@@ -327,11 +349,18 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
         if owning_draft is not None:
             return owning_draft["id"], "deferred"
 
-        # New file → probe dimensions before insert.
+        # New file → probe dimensions + audio before insert.
         dims = probe_media_dimensions(row["file_path"])
         row["width"] = dims["width"]
         row["height"] = dims["height"]
         row["duration_sec"] = dims["duration_sec"]
+        if row["has_audio"] is None:
+            ha = probe_has_audio(row["file_path"])
+            row["has_audio"] = (1 if ha else 0) if ha is not None else None
+        # Compute stack_id from _v<N> suffix
+        base, ver = lib.strip_variant_suffix(Path(row["file_path"]).stem)
+        if ver is not None:
+            row["stack_id"] = base
         cols = ", ".join(ASSET_COLUMNS)
         placeholders = ", ".join("?" for _ in ASSET_COLUMNS)
         values = [row[c] for c in ASSET_COLUMNS]
@@ -344,7 +373,7 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
         return asset_id, "added"
 
     (asset_id, old_size, old_mtime, old_source_type, old_model,
-     old_w, old_h, old_dur) = existing
+     old_w, old_h, old_dur, old_stack_id, old_has_audio) = existing
 
     # Don't let a sidecar-driven re-scan downgrade a `generated` row the
     # wrapper wrote directly. If the existing row already has rich metadata
@@ -357,14 +386,29 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
 
     # Preserve existing dimensions on unchanged files. Probe lazily if NULL.
     if unchanged:
+        backfill_sets = []
+        backfill_vals = []
         if old_w is None or old_h is None:
-            # Backfill miss — probe once and patch in place.
             dims = probe_media_dimensions(row["file_path"])
             if dims["width"] is not None or dims["height"] is not None:
-                conn.execute(
-                    "UPDATE assets SET width = ?, height = ?, duration_sec = COALESCE(?, duration_sec) WHERE id = ?",
-                    (dims["width"], dims["height"], dims["duration_sec"], asset_id),
-                )
+                backfill_sets.extend(["width = ?", "height = ?", "duration_sec = COALESCE(?, duration_sec)"])
+                backfill_vals.extend([dims["width"], dims["height"], dims["duration_sec"]])
+        if old_stack_id is None:
+            base, ver = lib.strip_variant_suffix(Path(row["file_path"]).stem)
+            if ver is not None:
+                backfill_sets.append("stack_id = ?")
+                backfill_vals.append(base)
+        if old_has_audio is None and Path(row["file_path"]).suffix.lower() in lib.VIDEO_EXTS:
+            ha = probe_has_audio(row["file_path"])
+            if ha is not None:
+                backfill_sets.append("has_audio = ?")
+                backfill_vals.append(1 if ha else 0)
+        if backfill_sets:
+            backfill_vals.append(asset_id)
+            conn.execute(
+                f"UPDATE assets SET {', '.join(backfill_sets)} WHERE id = ?",
+                backfill_vals,
+            )
         _upsert_job(conn, asset_id, row)
         return asset_id, "unchanged"
 
@@ -373,6 +417,13 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
     row["width"] = dims["width"]
     row["height"] = dims["height"]
     row["duration_sec"] = dims["duration_sec"]
+    if row["has_audio"] is None:
+        ha = probe_has_audio(row["file_path"])
+        row["has_audio"] = (1 if ha else 0) if ha is not None else None
+    if row["stack_id"] is None:
+        base, ver = lib.strip_variant_suffix(Path(row["file_path"]).stem)
+        if ver is not None:
+            row["stack_id"] = base
 
     set_clause = ", ".join(f"{c} = ?" for c in ASSET_COLUMNS)
     values = [row[c] for c in ASSET_COLUMNS] + [asset_id]
