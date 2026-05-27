@@ -653,7 +653,7 @@ WATCHER = FolderWatcher(STATE)
 VALID_FILTERS = {
     "status", "source_type", "model", "workflow", "shot_id", "scene",
     "media_type", "client", "project", "has_sidecar",
-    "parent_filename", "pass_num", "aspect_ratio",
+    "parent_filename", "pass_num",
 }
 
 
@@ -679,7 +679,7 @@ def _extract_hf_url(notes_text: str | None) -> str | None:
 
 def _row_to_asset(row: sqlite3.Row, thumb_dir: Path) -> dict:
     file_path = row["file_path"]
-    thumb_name = f"{lib.thumb_key(file_path)}.jpg"
+    thumb_name = row["thumb_path"] or f"{lib.thumb_key(file_path)}.jpg"
     asset = {
         "id": row["id"],
         "filename": row["filename"],
