@@ -338,15 +338,38 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
 
         # Issue #27 (scanner debounce) — if a draft/firing row with the same
         # filename already exists in this gallery, the wrapper owns this
-        # file's eventual row. Skip insert so the wrapper's UPDATE brings
-        # the draft row to status=review without creating a ghost duplicate.
+        # file's eventual row. Normally the wrapper's `_write_db_row` mutates
+        # that row to status=review when the fire completes. If we observe
+        # the real file on disk AND the row is still in 'firing' status, the
+        # fire completed but the wrapper never finished its DB write
+        # (timeout, crash, container killed, etc). Heal in-place by adopting
+        # the firing row: point its file_path at the real file, flip status
+        # to review, probe dimensions. Prevents the "stuck Cooking…" card
+        # the director was seeing for fired-and-rendered assets.
         owning_draft = conn.execute(
-            "SELECT id FROM assets "
+            "SELECT id, status FROM assets "
             "WHERE filename = ? AND status IN ('draft','firing') "
             "AND file_path LIKE ?",
             (row["filename"], gallery_dir.rstrip(os.sep) + os.sep + "%"),
         ).fetchone()
         if owning_draft is not None:
+            if owning_draft["status"] == "firing":
+                dims = probe_media_dimensions(row["file_path"])
+                conn.execute(
+                    """UPDATE assets SET
+                        file_path = ?, status = 'review',
+                        size_bytes = ?, file_modified_at = ?,
+                        width = ?, height = ?, duration_sec = ?,
+                        sidecar_path = ?, has_sidecar = ?,
+                        thumb_path = NULL,
+                        last_updated_at = strftime('%s','now')
+                       WHERE id = ?""",
+                    (row["file_path"], row["size_bytes"], row["file_modified_at"],
+                     dims["width"], dims["height"], dims["duration_sec"],
+                     row["sidecar_path"], row["has_sidecar"], owning_draft["id"]),
+                )
+                _upsert_job(conn, owning_draft["id"], row)
+                return owning_draft["id"], "updated"
             return owning_draft["id"], "deferred"
 
         # New file → probe dimensions + audio before insert.
