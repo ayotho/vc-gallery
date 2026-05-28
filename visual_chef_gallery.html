@@ -1202,7 +1202,7 @@ select.mp-input { padding-right: 22px; }
 
       <div class="search">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.3"/><path d="M11 11 L14 14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-        <input id="search" placeholder="Search filename, prompt, notes, shot ID, scene…" />
+        <input id="search" placeholder="Search filename, prompt, notes, shot ID, segment…" />
         <span class="kbd">/</span>
       </div>
 
@@ -1215,9 +1215,9 @@ select.mp-input { padding-right: 22px; }
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="0.5" y="0.5" width="4.5" height="4.5" stroke="currentColor"/><rect x="7" y="0.5" width="4.5" height="4.5" stroke="currentColor"/><rect x="0.5" y="7" width="4.5" height="4.5" stroke="currentColor"/><rect x="7" y="7" width="4.5" height="4.5" stroke="currentColor"/></svg>
           Grid
         </button>
-        <button data-view="scenes" title="Scene overview — grouped by scene">
+        <button data-view="scenes" title="Segment overview — grouped by segment">
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="0.5" y="0.5" width="11" height="3" rx="1" stroke="currentColor"/><rect x="0.5" y="5.5" width="5" height="3" rx="1" stroke="currentColor"/><rect x="7" y="5.5" width="4.5" height="3" rx="1" stroke="currentColor"/></svg>
-          Scenes
+          Segments
         </button>
         <button data-view="shots" title="Group by shot — see all versions clustered by shot_id">
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="0.5" y="0.5" width="3.5" height="11" rx="1" stroke="currentColor"/><rect x="5.5" y="0.5" width="3.5" height="7" rx="1" stroke="currentColor"/><rect x="5.5" y="9" width="3.5" height="2.5" rx="1" stroke="currentColor"/></svg>
@@ -1275,7 +1275,7 @@ select.mp-input { padding-right: 22px; }
         </div>
         <div class="ihf-row">
           <label class="ihf-field ihf-half">
-            <span class="ihf-label">Scene</span>
+            <span class="ihf-label">Segment</span>
             <input type="text" id="ihf-scene" list="ihf-scene-list" placeholder="type to search or pick" autocomplete="off" spellcheck="false">
             <datalist id="ihf-scene-list"></datalist>
           </label>
@@ -2115,7 +2115,7 @@ function renderFilterBreadcrumb() {
   const el = $('#filter-breadcrumb');
   if (!el) return;
   const f = state.filters;
-  const LABELS = { status: 'Status', source_type: 'Source', model: 'Model', workflow: 'Workflow', scene: 'Scene', shot_id: 'Shot', media_type: 'Media' };
+  const LABELS = { status: 'Status', source_type: 'Source', model: 'Model', workflow: 'Workflow', scene: 'Segment', shot_id: 'Shot', media_type: 'Media' };
   const active = Object.entries(f).filter(([, v]) => v && typeof v === 'string' && v.length > 0);
   if (active.length === 0) { el.hidden = true; return; }
   el.hidden = false;
@@ -2399,7 +2399,7 @@ async function fillDrawer(id) {
     <div class="section-head">Metadata</div>
     <div class="meta-table">
       ${metaRowEditable('Shot', asset.shot_id || '', 'shot_id')}
-      ${metaRowEditable('Scene', asset.scene || '', 'scene')}
+      ${metaRowEditable('Segment', asset.scene || '', 'scene')}
       ${(() => {
         // Source of truth for MODEL/WORKFLOW on drafts is the wrapper payload —
         // that's what will actually fire. assets.model/workflow get filled later
@@ -3356,16 +3356,16 @@ function applySceneOrder(scenes) {
 
 async function loadScenesView() {
   const root = $('#scenes-root');
-  root.innerHTML = '<div class="scene-empty">Loading scenes…</div>';
+  root.innerHTML = '<div class="scene-empty">Loading segments…</div>';
   let data;
   try {
     data = await api('/api/scenes');
   } catch (e) {
-    root.innerHTML = `<div class="scene-empty">Failed to load scenes: ${e.message}</div>`;
+    root.innerHTML = `<div class="scene-empty">Failed to load segments: ${e.message}</div>`;
     return;
   }
   if (!data.scenes || data.scenes.length === 0) {
-    root.innerHTML = '<div class="scene-empty">No scenes found. Assign scenes to assets to see the overview.</div>';
+    root.innerHTML = '<div class="scene-empty">No segments found. Assign segments to assets to see the overview.</div>';
     return;
   }
   data.scenes = applySceneOrder(data.scenes);
