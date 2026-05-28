@@ -684,6 +684,18 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .ref-thumb:hover { border-color: var(--ink); transform: translateY(-1px); }
 .ref-thumb-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ref-thumb-img.broken { background: repeating-linear-gradient(45deg, #f4f2ec, #f4f2ec 8px, #e4e2dc 8px, #e4e2dc 16px); }
+/* External-reference placeholder (no local file, e.g. Higgsfield media UUID).
+   Renders a centered uppercase label on the same striped background as `.broken`,
+   but without the broken-image icon. No <img> in the DOM. */
+.ref-thumb-img.ref-external {
+  background: repeating-linear-gradient(45deg, #f4f2ec, #f4f2ec 8px, #e4e2dc 8px, #e4e2dc 16px);
+  display: flex; align-items: center; justify-content: center;
+}
+.ref-external-label {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 2px;
+  color: var(--ink); opacity: 0.45; text-transform: uppercase;
+  background: rgba(255,255,255,0.7); padding: 4px 10px; border-radius: 3px;
+}
 .ref-thumb-meta {
   position: absolute; left: 0; right: 0; bottom: 0;
   display: flex; align-items: center; gap: 6px;
@@ -2186,15 +2198,21 @@ async function fillDrawer(id) {
       : (asset.refs || []).map(r => ({ raw: r, kind: r.startsWith('http') ? 'url' : 'file', url: '', filename: r }));
     if (!resolved.length) return '';
     const cards = resolved.slice(0, 12).map((r, i) => {
+      const isExternal = r.kind === 'external_uuid';
       const src = r.url || (r.kind === 'url' ? r.raw : '');
       const safeName = escapeHtml(r.filename || r.raw || '');
       // draggable="false" on the img is critical: without it the browser's
       // native image-drag (drags the image URL, not a File) fires first and
       // shadows the parent .ref-thumb's dragstart. Disabling lets the parent
       // div take over via DownloadURL → real File drop.
-      const previewHtml = src
-        ? `<img class="ref-thumb-img" loading="lazy" draggable="false" src="${src}" alt="${safeName}" onerror="this.classList.add('broken')">`
-        : `<div class="ref-thumb-img broken"></div>`;
+      // External UUID refs (Higgsfield media identifiers with no local file)
+      // render a styled placeholder instead of an <img> — avoids the
+      // broken-image icon that would 404 on /ref?path=<uuid>.
+      const previewHtml = isExternal
+        ? `<div class="ref-thumb-img ref-external"><div class="ref-external-label">external</div></div>`
+        : (src
+            ? `<img class="ref-thumb-img" loading="lazy" draggable="false" src="${src}" alt="${safeName}" onerror="this.classList.add('broken')">`
+            : `<div class="ref-thumb-img broken"></div>`);
       // Copy button only when we have a fetchable URL — files via /ref?path=
       // and direct URLs both work. Skip for refs with no resolved src.
       const copyBtnHtml = src

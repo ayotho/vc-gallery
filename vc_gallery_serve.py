@@ -1118,18 +1118,33 @@ def _facet_counts(params: dict | None = None) -> dict:
     return out
 
 
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
 def _resolve_ref_to_url(ref: str, gallery: Path | None) -> dict:
     """Turn a ref string into something the UI can render.
 
-    refs come in three shapes from the wild:
+    refs come in four shapes from the wild:
+      - https:// URL → pass through as-is
+      - Higgsfield media UUID (server-side identifier, no local file)
+        → kind=external_uuid, no `url` field. Frontend renders a placeholder
+        card instead of attempting an <img> that 404s with broken-icon.
+        No HF / gallery-asset linking — that's a separate feature deferred
+        to a future redesign of #80.
       - Absolute or relative filesystem path → serve via /ref?path=…
       - Bare filename → assume it's in the gallery, serve via /ref?path=…
-      - https:// URL → pass through as-is
     """
     if not ref:
         return {"raw": "", "kind": "empty"}
     if ref.startswith(("http://", "https://")):
         return {"raw": ref, "kind": "url", "url": ref}
+    if _UUID_RE.match(ref):
+        return {
+            "raw": ref,
+            "kind": "external_uuid",
+            "uuid": ref,
+            "filename": f"external · {ref[:8]}…",
+        }
     p = Path(ref)
     # Bare filename → resolve into gallery
     if not p.is_absolute() and gallery is not None and "/" not in ref:
