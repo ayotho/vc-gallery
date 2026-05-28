@@ -843,6 +843,15 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .history .when { font-family: var(--mono); font-size: 11px; letter-spacing: 0.4px; color: #8a877f; text-transform: uppercase; }
 
 .actions { position: sticky; bottom: 0; margin: var(--s-xl) calc(var(--s-md) * -1) calc(var(--s-section) * -1); padding: var(--s-md) var(--s-md) var(--s-lg); background: linear-gradient(180deg, rgba(255,255,255,0) 0%, var(--canvas) 30%); border-top: 1px solid var(--hairline-soft); }
+/* When the version strip is visible (has siblings to show), drop sticky on
+   .actions so the action buttons don't overlay the strip content. The strip
+   lives outside drawer-body but inside the scroll container, so sticky-bottom
+   pins .actions over the strip whenever the user scrolls to see siblings.
+   Using :has() to react when the strip is unhidden — no JS coupling. */
+.drawer:has(.drawer-version-strip:not([hidden])) .actions {
+  position: static;
+  background: var(--canvas);
+}
 .actions .primary { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .actions .primary .act-btn { flex: 1 1 auto; min-width: 96px; padding: 0 10px; }
 .act-btn { height: 40px; background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--r-pill); font-size: 13px; font-weight: 480; letter-spacing: -0.1px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
