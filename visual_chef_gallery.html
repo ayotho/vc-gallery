@@ -2287,7 +2287,13 @@ async function fillDrawer(id) {
       <div class="meta-table">
         ${Object.entries(asset.draft.payload).filter(([k]) => k !== 'prompt' && k !== 'image' && k !== 'refs').map(([k, v]) => {
           const val = (typeof v === 'object') ? JSON.stringify(v) : String(v);
-          return metaRow(k, val, true);
+          // Disambiguate the wrapper-payload `notes` from the editable
+          // user-notes textarea below — they're different fields with the
+          // same name. payload.notes is staging context passed to the
+          // wrapper at fire time; the textarea is the per-asset director
+          // notes (asset.notes / user_notes).
+          const label = (k === 'notes') ? 'Staging notes' : k;
+          return metaRow(label, val, true);
         }).join('')}
       </div>
     ` : ''}
