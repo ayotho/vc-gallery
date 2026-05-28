@@ -661,6 +661,21 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .prompt-box::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: linear-gradient(0deg, var(--surface-soft) 30%, transparent 100%); pointer-events: none; }
 .prompt-box.expanded::after { display: none; }
 .prompt-box.empty { color: #8a877f; font-style: italic; }
+/* Editable per-model params (#92b). Compact monospace inputs that match the
+   read-only .meta-row .v look. Show focus state on edit. */
+.mp-input {
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.2px;
+  color: var(--ink); background: var(--canvas);
+  border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  padding: 4px 8px; min-width: 0; box-sizing: border-box;
+  width: 100%;
+  transition: border-color .12s ease;
+}
+.mp-input:focus { outline: none; border-color: var(--ink); }
+.mp-input.saving { opacity: 0.6; pointer-events: none; }
+.mp-input.saved { border-color: #34D399; }
+.mp-input.error { border-color: #f5a4a4; background: #fff5f5; }
+select.mp-input { padding-right: 22px; }
 /* Editable variant for drafts — replaces the read-only div with a textarea.
    Same visual register as .prompt-box so the swap is invisible until focus. */
 .prompt-box-edit {
@@ -1523,6 +1538,78 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 <script>
 'use strict';
 
+// Per-model parameter schemas (#92b). Drives the editable Wrapper Params UI
+// on drafts — renders a typed input per param, sends partial-merge PUTs on
+// blur. Mirrors hf_payload.schema.json but only the per-model relevant subset
+// (whole schema = too many irrelevant knobs). Add a model here when needed.
+//
+// Param spec:
+//   type: 'select' (enum) | 'number' (int) | 'text' (string)
+//   options: [...] — required for select
+//   min/max: for number
+//   default: pre-fill when missing on payload
+//   help: tooltip text
+//   group: 'core' | 'quality' | 'timing' | 'output' — for visual grouping
+const MODEL_SCHEMAS = {
+  nano_banana_2: {
+    label: 'Nano Banana 2 — image edit',
+    kind: 'image',
+    params: {
+      aspect_ratio: { type: 'select', options: ['1:1','16:9','9:16','4:3','3:4','21:9','9:21'], default: '16:9', group: 'output' },
+      count: { type: 'number', min: 1, max: 9, default: 1, group: 'output', help: 'Variants (1–9)' },
+    },
+  },
+  gpt_image_2: {
+    label: 'GPT Image 2 — image edit',
+    kind: 'image',
+    params: {
+      aspect_ratio: { type: 'select', options: ['1:1','16:9','9:16','4:3','3:4'], default: '16:9', group: 'output' },
+      quality: { type: 'select', options: ['low','medium','high'], default: 'high', group: 'quality' },
+      resolution: { type: 'select', options: ['1k','2k','4k'], default: '2k', group: 'quality' },
+      count: { type: 'number', min: 1, max: 4, default: 1, group: 'output' },
+    },
+  },
+  seedance_2_0: {
+    label: 'Seedance 2.0 — i2v / t2v',
+    kind: 'video',
+    params: {
+      resolution: { type: 'select', options: ['480p','720p','1080p'], default: '1080p', group: 'quality' },
+      duration: { type: 'number', min: 5, max: 10, default: 8, group: 'timing', help: 'Seconds' },
+      genre: { type: 'select', options: ['auto','action','horror','comedy','noir','drama','epic'], default: 'auto', group: 'core' },
+      sound: { type: 'select', options: ['on','off'], default: 'off', group: 'core' },
+      seed: { type: 'number', min: 0, max: 999999999, default: '', group: 'core', help: 'Optional reproducibility seed' },
+    },
+  },
+  cinematic_studio_video_v2: {
+    label: 'Cinematic Studio v2 (Kling) — i2v',
+    kind: 'video',
+    params: {
+      mode: { type: 'select', options: ['pro','std'], default: 'pro', group: 'quality' },
+      duration: { type: 'number', min: 5, max: 10, default: 8, group: 'timing', help: 'Seconds' },
+      aspect_ratio: { type: 'select', options: ['16:9','9:16','1:1'], default: '16:9', group: 'output' },
+    },
+  },
+};
+
+// Render a single typed input for the editable Wrapper Params UI. Returns the
+// HTML string. assetId is used for data-attrs the blur handler reads.
+function renderModelParamInput(paramName, spec, currentValue, assetId) {
+  const valStr = currentValue === undefined || currentValue === null ? '' : String(currentValue);
+  const help = spec.help ? ` title="${escapeHtml(spec.help)}"` : '';
+  const dataAttrs = `data-param="${escapeHtml(paramName)}" data-asset-id="${assetId}" data-type="${spec.type}"`;
+  if (spec.type === 'select') {
+    const opts = spec.options.map(o => `<option value="${escapeHtml(o)}"${o === valStr ? ' selected' : ''}>${escapeHtml(o)}</option>`).join('');
+    return `<select class="mp-input" ${dataAttrs}${help}>${valStr === '' ? '<option value="">—</option>' : ''}${opts}</select>`;
+  }
+  if (spec.type === 'number') {
+    const min = spec.min !== undefined ? ` min="${spec.min}"` : '';
+    const max = spec.max !== undefined ? ` max="${spec.max}"` : '';
+    return `<input type="number" class="mp-input"${min}${max} value="${escapeHtml(valStr)}" ${dataAttrs}${help}>`;
+  }
+  // text / fallback
+  return `<input type="text" class="mp-input" value="${escapeHtml(valStr)}" ${dataAttrs}${help}>`;
+}
+
 const STATUSES = [
   { key: 'draft',     label: 'Drafts',    swatch: 'var(--block-pink)' },
   { key: 'firing',    label: 'Firing',    swatch: '#e67e22' },
@@ -2306,6 +2393,17 @@ async function fillDrawer(id) {
         // non-drafts (post-fire), assets.model/workflow ARE the source of truth.
         const modelVal = (isDraft && asset.draft?.payload?.model) || asset.model || '—';
         const wfVal = (isDraft && asset.draft?.payload?.workflow) || asset.workflow || '—';
+        // On drafts, MODEL becomes an editable <select> populated from
+        // MODEL_SCHEMAS. Changing it triggers a Wrapper Params re-render with
+        // the new model's knob set (handled by the change listener below).
+        if (isDraft) {
+          const opts = Object.keys(MODEL_SCHEMAS).map(k =>
+            `<option value="${escapeHtml(k)}"${k === modelVal ? ' selected' : ''}>${escapeHtml(k)}</option>`
+          ).join('');
+          // Mirror metaRow structure so the row layout matches other rows
+          const modelRow = `<div class="meta-row"><span class="k">Model</span><span class="v mono"><select class="mp-input" id="model-select" data-param="model" data-asset-id="${asset.id}" data-type="select">${MODEL_SCHEMAS[modelVal] ? opts : `<option value="${escapeHtml(modelVal)}" selected>${escapeHtml(modelVal)} (unknown)</option>${opts}`}</select></span></div>`;
+          return modelRow + metaRow('Workflow', wfVal, true);
+        }
         return metaRow('Model', modelVal, true) + metaRow('Workflow', wfVal, true);
       })()}
       ${metaRow('Pass', asset.pass_num ? `v${asset.pass_num}${asset.variant ? ' · ' + asset.variant : ''}` : '—', true)}
@@ -2316,21 +2414,45 @@ async function fillDrawer(id) {
       ${isDraft && asset.draft && asset.draft.estimated_cost ? metaRow('Estimated cost', asset.draft.estimated_cost + ' credits', true) : ''}
     </div>
 
-    ${isDraft && asset.draft && asset.draft.payload ? `
-      <div class="section-head">Wrapper params</div>
+    ${isDraft && asset.draft && asset.draft.payload ? (() => {
+      // Editable Wrapper params (#92b). Render typed inputs for the params
+      // the active model exposes (per MODEL_SCHEMAS); fall back to read-only
+      // text rows for unknown models OR for keys outside the schema (e.g.
+      // staging notes, custom keys).
+      const payload = asset.draft.payload;
+      const modelKey = payload.model;
+      const schema = MODEL_SCHEMAS[modelKey];
+      // Keys handled by the typed inputs (don't repeat as read-only)
+      const schemaKeys = schema ? Object.keys(schema.params) : [];
+      // Keys we never show in this section (handled elsewhere)
+      const HIDDEN = new Set(['prompt', 'image', 'start_image', 'end_image', 'video', 'audio', 'media', 'refs', 'model', 'workflow', 'filename', 'gallery', 'client', 'project', 'shot_id', 'scene', 'asset_id', 'force']);
+
+      // 1. Typed inputs for active model's schema (always render even if
+      //    payload doesn't carry the key yet — director can set fresh values)
+      const typedRows = schemaKeys.map(k => {
+        const spec = schema.params[k];
+        const v = payload[k];
+        const inputHtml = renderModelParamInput(k, spec, v, asset.id);
+        return `<div class="meta-row"><span class="k">${escapeHtml(k.replace(/_/g, ' '))}</span><span class="v mono">${inputHtml}</span></div>`;
+      }).join('');
+
+      // 2. Read-only rows for everything else in payload (staging notes,
+      //    skip_sidecar, wait_timeout_seconds, etc).
+      const extraRows = Object.entries(payload).filter(([k]) => !HIDDEN.has(k) && !schemaKeys.includes(k)).map(([k, v]) => {
+        const val = (typeof v === 'object') ? JSON.stringify(v) : String(v);
+        const label = (k === 'notes') ? 'Staging notes' : k;
+        return metaRow(label, val, true);
+      }).join('');
+
+      const helpText = schema ? `<span class="dim"> — ${escapeHtml(schema.label)}</span>` : '<span class="dim"> — unknown model, params read-only</span>';
+      return `
+      <div class="section-head">Wrapper params${helpText}</div>
       <div class="meta-table">
-        ${Object.entries(asset.draft.payload).filter(([k]) => k !== 'prompt' && k !== 'image' && k !== 'refs' && k !== 'model' && k !== 'workflow').map(([k, v]) => {
-          const val = (typeof v === 'object') ? JSON.stringify(v) : String(v);
-          // Disambiguate the wrapper-payload `notes` from the editable
-          // user-notes textarea below — they're different fields with the
-          // same name. payload.notes is staging context passed to the
-          // wrapper at fire time; the textarea is the per-asset director
-          // notes (asset.notes / user_notes).
-          const label = (k === 'notes') ? 'Staging notes' : k;
-          return metaRow(label, val, true);
-        }).join('')}
+        ${typedRows}
+        ${extraRows}
       </div>
-    ` : ''}
+    `;
+    })() : ''}
 
     <div class="section-head">Prompt <span class="act" id="prompt-expand">${(asset.prompt && !isDraft) ? 'Expand · Copy' : (isDraft ? 'Auto-save on blur' : '')}</span></div>
     ${isDraft
@@ -2471,6 +2593,88 @@ async function fillDrawer(id) {
     promptEditEl.addEventListener('blur', savePrompt);
     promptEditEl.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); promptEditEl.blur(); }
+    });
+  }
+
+  // Editable per-model wrapper params (#92b). Each .mp-input lives in the
+  // Wrapper Params section AND the Model row. Blur/change → PUT partial-
+  // merge against /api/draft/{id}. Server's _edit_draft (#93) now shallow-
+  // merges payload so we send only the changed key.
+  if (isDraft) {
+    const saveParam = async (input) => {
+      const param = input.dataset.param;
+      const type = input.dataset.type;
+      if (!param) return;
+      let v = input.value;
+      // Type coercion for numeric inputs (number type returns string from .value)
+      if (type === 'number') {
+        v = v === '' ? null : Number(v);
+        if (typeof v === 'number' && Number.isNaN(v)) {
+          input.classList.add('error');
+          flashToast(`Invalid number for ${param}`, 'error');
+          return;
+        }
+      }
+      // Empty string → null (drops the key on the server)
+      if (typeof v === 'string' && v === '') v = null;
+      input.classList.remove('saved', 'error');
+      input.classList.add('saving');
+      try {
+        const body = { payload: { [param]: v } };
+        await api('/api/draft/' + asset.id, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        input.classList.remove('saving');
+        input.classList.add('saved');
+        setTimeout(() => input.classList.remove('saved'), 1200);
+      } catch (e) {
+        input.classList.remove('saving');
+        input.classList.add('error');
+        flashToast(`Save failed (${param}): ` + e.message, 'error');
+      }
+    };
+
+    // Attach to ALL .mp-input elements (params + model select)
+    body.querySelectorAll('.mp-input').forEach(input => {
+      // Different events per input type — selects fire change, text/number fire blur
+      const evt = input.tagName === 'SELECT' ? 'change' : 'blur';
+      input.addEventListener(evt, async () => {
+        // Model swap is special: drop incompatible params from the old schema
+        // BEFORE saving the new model, then re-render with the new schema.
+        if (input.id === 'model-select') {
+          const newModel = input.value;
+          const oldSchema = MODEL_SCHEMAS[asset.draft?.payload?.model];
+          const newSchema = MODEL_SCHEMAS[newModel];
+          const dropKeys = [];
+          if (oldSchema && newSchema) {
+            const newKeys = new Set(Object.keys(newSchema.params));
+            for (const k of Object.keys(oldSchema.params)) {
+              if (!newKeys.has(k)) dropKeys.push(k);
+            }
+          }
+          // Build merge body: new model + null for each dropped key
+          const mergeBody = { model: newModel };
+          for (const k of dropKeys) mergeBody[k] = null;
+          try {
+            await api('/api/draft/' + asset.id, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ payload: mergeBody }),
+            });
+            if (dropKeys.length) {
+              flashToast(`Switched to ${newModel} — dropped ${dropKeys.length} incompatible param${dropKeys.length === 1 ? '' : 's'}`);
+            }
+          } catch (e) {
+            flashToast('Model swap failed: ' + e.message, 'error');
+            return;
+          }
+          await fillDrawer(asset.id);
+          return;
+        }
+        await saveParam(input);
+      });
     });
   }
 
