@@ -661,6 +661,24 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .prompt-box::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: linear-gradient(0deg, var(--surface-soft) 30%, transparent 100%); pointer-events: none; }
 .prompt-box.expanded::after { display: none; }
 .prompt-box.empty { color: #8a877f; font-style: italic; }
+/* Editable variant for drafts — replaces the read-only div with a textarea.
+   Same visual register as .prompt-box so the swap is invisible until focus. */
+.prompt-box-edit {
+  width: 100%; box-sizing: border-box;
+  background: var(--surface-soft); border-radius: var(--r-md);
+  padding: var(--s-md); border: 1px solid transparent;
+  font-family: var(--mono); font-size: 13px; line-height: 1.7;
+  letter-spacing: 0.1px; color: var(--ink); font-weight: 400;
+  resize: vertical; min-height: 240px; max-height: 600px;
+  white-space: pre-wrap; word-break: break-word;
+  transition: border-color .12s ease;
+}
+.prompt-box-edit:focus { outline: none; border-color: var(--ink); }
+.prompt-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 4px; font-family: var(--mono); font-size: 10px;
+  letter-spacing: 0.6px; color: #8a877f; text-transform: uppercase;
+}
 
 .refs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .ref { aspect-ratio: 1 / 1; background: var(--surface-soft); border-radius: var(--r-sm); border: 1px solid var(--hairline); position: relative; cursor: pointer; overflow: hidden; }
@@ -2298,8 +2316,15 @@ async function fillDrawer(id) {
       </div>
     ` : ''}
 
-    <div class="section-head">Prompt <span class="act" id="prompt-expand">${asset.prompt ? 'Expand · Copy' : ''}</span></div>
-    <div class="prompt-box ${asset.prompt ? '' : 'empty'}" id="prompt-box">${asset.prompt ? escapeHtml(asset.prompt) : 'No prompt recorded'}</div>
+    <div class="section-head">Prompt <span class="act" id="prompt-expand">${(asset.prompt && !isDraft) ? 'Expand · Copy' : (isDraft ? 'Auto-save on blur' : '')}</span></div>
+    ${isDraft
+      ? `<textarea class="prompt-box-edit" id="prompt-edit" placeholder="Write your prompt…">${escapeHtml(asset.prompt || '')}</textarea>
+         <div class="prompt-foot">
+           <span id="prompt-status">${asset.prompt ? 'SAVED' : 'EMPTY'}</span>
+           <span>⌘ + ENTER</span>
+         </div>`
+      : `<div class="prompt-box ${asset.prompt ? '' : 'empty'}" id="prompt-box">${asset.prompt ? escapeHtml(asset.prompt) : 'No prompt recorded'}</div>`
+    }
 
     ${refsHtml}
 
@@ -2397,6 +2422,42 @@ async function fillDrawer(id) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); notesEl.blur(); }
   });
 
+  // Prompt auto-save (drafts only) — mirrors the notes pattern but routes
+  // through PUT /api/draft/{id} because the prompt lives inside payload, not
+  // on the asset row. Client-side merge: read current payload (including the
+  // old prompt), replace just .prompt, send the whole payload back. Until
+  // #93 partial-merge lands, _edit_draft REPLACES the entire payload, so the
+  // merge has to happen here.
+  const promptEditEl = $('#prompt-edit');
+  if (promptEditEl && isDraft) {
+    let savedPrompt = promptEditEl.value;
+    const savePrompt = async () => {
+      const v = promptEditEl.value;
+      if (v === savedPrompt) return;
+      try {
+        // Pull current payload (asset.draft.payload was rendered at fill time
+        // but may be stale; the safest path is to re-fetch right before PUT).
+        const current = await fetch('/api/assets/' + asset.id).then(r => r.json());
+        const basePayload = (current.draft && current.draft.payload) ? { ...current.draft.payload } : {};
+        basePayload.prompt = v;
+        await api('/api/draft/' + asset.id, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payload: basePayload }),
+        });
+        savedPrompt = v;
+        const statusEl = $('#prompt-status');
+        if (statusEl) statusEl.textContent = 'SAVED ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } catch (e) {
+        flashToast('Prompt save failed: ' + e.message, 'error');
+      }
+    };
+    promptEditEl.addEventListener('blur', savePrompt);
+    promptEditEl.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); promptEditEl.blur(); }
+    });
+  }
+
   // Inline-editable metadata fields (shot_id, scene)
   $$('.meta-edit-input').forEach(input => {
     const field = input.dataset.field;
@@ -2447,7 +2508,7 @@ async function fillDrawer(id) {
   });
 
   const expand = $('#prompt-expand');
-  if (expand && asset.prompt) expand.addEventListener('click', () => $('#prompt-box').classList.toggle('expanded'));
+  if (expand && asset.prompt && !isDraft) expand.addEventListener('click', () => $('#prompt-box').classList.toggle('expanded'));
 
   // Copy path button (universal — appears for every asset with file_path)
   const copyPath = $('#btn-copy-path');
