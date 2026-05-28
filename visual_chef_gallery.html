@@ -1303,25 +1303,16 @@ select.mp-input { padding-right: 22px; }
   <!-- Body -->
   <div class="body" id="body">
 
-    <!-- Sidebar — section order reflects director usage frequency (2026-05-21):
-         Status (most) → Refinements → Shot IDs → Media → Sort → Source (least). -->
+    <!-- Sidebar — section order reflects director usage frequency (2026-05-29):
+         Status (most) → Media (image/video, most-cut filter) → Refinements →
+         Shot IDs → Sort → Source (least). Media moved up from 4th to 2nd
+         per director ask — used on every session to switch view between
+         image-gens and video-gens. -->
     <aside class="sidebar">
 
       <div class="side-group" id="filter-status-group">
         <div class="side-label">Status <span class="clear" data-clear="status">clear</span></div>
         <div id="filter-status"></div>
-      </div>
-
-      <div class="side-group">
-        <div class="side-label">Refinements <span class="clear" data-clear="refinements">clear</span></div>
-        <div class="select"><span id="refine-model-label" class="ph">model · any</span><span class="chev">▾</span><select id="refine-model"><option value="">any</option></select></div>
-        <div class="select"><span id="refine-workflow-label" class="ph">workflow · any</span><span class="chev">▾</span><select id="refine-workflow"><option value="">any</option></select></div>
-        <div class="select"><span id="refine-scene-label" class="ph">scene · any</span><span class="chev">▾</span><select id="refine-scene"><option value="">any</option></select></div>
-      </div>
-
-      <div class="side-group" id="shot-browser-group">
-        <div class="side-label">Shot IDs <span class="clear" data-clear="shot_id">clear</span> <span class="dim" id="shot-count"></span></div>
-        <div id="shot-browser" class="shot-browser"></div>
       </div>
 
       <div class="side-group">
@@ -1339,6 +1330,18 @@ select.mp-input { padding-right: 22px; }
           <span>Has sidecar</span>
           <div class="toggle" id="toggle-sidecar"></div>
         </div>
+      </div>
+
+      <div class="side-group">
+        <div class="side-label">Refinements <span class="clear" data-clear="refinements">clear</span></div>
+        <div class="select"><span id="refine-model-label" class="ph">model · any</span><span class="chev">▾</span><select id="refine-model"><option value="">any</option></select></div>
+        <div class="select"><span id="refine-workflow-label" class="ph">workflow · any</span><span class="chev">▾</span><select id="refine-workflow"><option value="">any</option></select></div>
+        <div class="select"><span id="refine-scene-label" class="ph">segment · any</span><span class="chev">▾</span><select id="refine-scene"><option value="">any</option></select></div>
+      </div>
+
+      <div class="side-group" id="shot-browser-group">
+        <div class="side-label">Shot IDs <span class="clear" data-clear="shot_id">clear</span> <span class="dim" id="shot-count"></span></div>
+        <div id="shot-browser" class="shot-browser"></div>
       </div>
 
       <div class="side-group">
