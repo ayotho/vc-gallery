@@ -2299,8 +2299,15 @@ async function fillDrawer(id) {
     <div class="meta-table">
       ${metaRowEditable('Shot', asset.shot_id || '', 'shot_id')}
       ${metaRowEditable('Scene', asset.scene || '', 'scene')}
-      ${metaRow('Model', asset.model || '—', true)}
-      ${metaRow('Workflow', asset.workflow || '—', true)}
+      ${(() => {
+        // Source of truth for MODEL/WORKFLOW on drafts is the wrapper payload —
+        // that's what will actually fire. assets.model/workflow get filled later
+        // by the wrapper write or scanner and can disagree mid-flight. For
+        // non-drafts (post-fire), assets.model/workflow ARE the source of truth.
+        const modelVal = (isDraft && asset.draft?.payload?.model) || asset.model || '—';
+        const wfVal = (isDraft && asset.draft?.payload?.workflow) || asset.workflow || '—';
+        return metaRow('Model', modelVal, true) + metaRow('Workflow', wfVal, true);
+      })()}
       ${metaRow('Pass', asset.pass_num ? `v${asset.pass_num}${asset.variant ? ' · ' + asset.variant : ''}` : '—', true)}
       ${metaRow('Source', (asset.source_type || '').replace('_', ' '), true)}
       ${asset.has_sidecar ? metaRow('Sidecar', asset.sidecar_path ? asset.sidecar_path.split('/').pop() : '—', true) : ''}
@@ -2312,7 +2319,7 @@ async function fillDrawer(id) {
     ${isDraft && asset.draft && asset.draft.payload ? `
       <div class="section-head">Wrapper params</div>
       <div class="meta-table">
-        ${Object.entries(asset.draft.payload).filter(([k]) => k !== 'prompt' && k !== 'image' && k !== 'refs').map(([k, v]) => {
+        ${Object.entries(asset.draft.payload).filter(([k]) => k !== 'prompt' && k !== 'image' && k !== 'refs' && k !== 'model' && k !== 'workflow').map(([k, v]) => {
           const val = (typeof v === 'object') ? JSON.stringify(v) : String(v);
           // Disambiguate the wrapper-payload `notes` from the editable
           // user-notes textarea below — they're different fields with the
