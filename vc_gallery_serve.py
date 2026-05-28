@@ -2019,14 +2019,28 @@ def _edit_draft(asset_id: int, payload: dict) -> dict:
     if not isinstance(note_data, dict):
         note_data = {}
 
-    # Allowed edits: replace payload, replace refs, replace prompt, edit cost
+    # Allowed edits — partial-merge semantics (#93). Per-key behavior:
+    #   - "payload": SHALLOW-MERGE into existing payload (was full-replace).
+    #     Caller can send {prompt: "new"} without losing model/start_image/
+    #     end_image/refs/etc. To explicitly DROP a key, send it as null.
+    #   - "image_refs": full-replace (atomic list semantics).
+    #   - "estimated_cost": full-replace.
+    # Refs are re-derived from the MERGED payload, not just the sent slice,
+    # so unrelated edits (e.g. prompt-only) don't clobber start_image.
     if "payload" in payload:
-        note_data["payload"] = payload["payload"]
-        # Re-resolve image refs from the new inner payload so thumbnails update
-        inner = payload["payload"]
+        incoming = payload["payload"] or {}
+        existing = note_data.get("payload") or {}
+        if not isinstance(existing, dict):
+            existing = {}
+        merged = {**existing, **incoming}
+        # Drop keys explicitly set to None (explicit-null = remove)
+        merged = {k: v for k, v in merged.items() if v is not None}
+        note_data["payload"] = merged
+        # Re-resolve image refs from the MERGED payload so thumbnails reflect
+        # both the prior and incoming ref slots.
         image_refs: list[str] = []
         for key in ("image", "start_image", "end_image", "video", "audio", "media", "refs"):
-            v = inner.get(key)
+            v = merged.get(key)
             if v is None:
                 continue
             if isinstance(v, list):
