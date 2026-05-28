@@ -651,9 +651,24 @@ def scan(
                     source_type=row["source_type"],
                 )
 
+        # Orphan-draft sweep: a draft row points at a real on-disk file that
+        # has since vanished (the director moved/deleted the source). Remove
+        # the row so the gallery doesn't show a ghost card.
+        #
+        # CRITICAL: drafts staged via POST /api/draft use a SYNTHETIC
+        # file_path under <gallery>/.drafts/<name>.draft.json — no real file
+        # is ever written there. Those drafts are managed by the API
+        # (create / fire / delete), not by the scanner. Skip them via the
+        # sentinel path component. Previously this sweep deleted EVERY
+        # API-staged draft on every rescan because their synthetic paths
+        # don't exist on disk.
+        sep = os.sep
+        synthetic_marker = f"{sep}.drafts{sep}"
         orphan_drafts = conn.execute(
-            "SELECT id, file_path FROM assets WHERE status = 'draft' AND file_path LIKE ?",
-            (str(source.resolve()) + "%",),
+            "SELECT id, file_path FROM assets "
+            "WHERE status = 'draft' AND file_path LIKE ? "
+            "AND file_path NOT LIKE ?",
+            (str(source.resolve()) + "%", f"%{synthetic_marker}%"),
         ).fetchall()
         orphan_count = 0
         for od in orphan_drafts:
