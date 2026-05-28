@@ -2508,9 +2508,9 @@ async function fillDrawer(id) {
     ${refsHtml}
 
     <div class="section-head">Notes <span class="dim">auto-save on blur</span></div>
-    <textarea class="notes" id="notes" placeholder="Add a note…">${escapeHtml(isDraft ? '' : (asset.notes || ''))}</textarea>
+    <textarea class="notes" id="notes" placeholder="Add a note…">${escapeHtml(asset.notes || '')}</textarea>
     <div class="notes-foot">
-      <span id="notes-status">${(asset.notes && !isDraft) ? 'SAVED' : 'EMPTY'}</span>
+      <span id="notes-status">${asset.notes ? 'SAVED' : 'EMPTY'}</span>
       <span>⌘ + ENTER</span>
     </div>
 
