@@ -701,6 +701,18 @@ class FolderWatcher:
         except Exception as e:  # noqa: BLE001
             print(f"[watcher] scan failed: {e}", file=sys.stderr)
             return
+        # When a fire completes, the wrapper writes the rendered file to the
+        # gallery path. The scanner picks it up as a NEW asset row alongside
+        # the existing firing-status ghost row at `.drafts/<name>.draft.json`.
+        # Without this merge, the director sees the rendered card AND the
+        # stuck "Cooking..." placeholder until the next server restart. The
+        # boot-time migration heals this; running it after each scan tick
+        # heals it in-session too. Idempotent — only fires when both rows
+        # exist for the same filename.
+        try:
+            self.state._migrate_draft_pairs_on_boot()
+        except Exception as e:  # noqa: BLE001
+            print(f"[watcher] draft-pair merge failed: {e}", file=sys.stderr)
         self.state._known_files = current
         self.state.mark_changed()
         sys.stderr.write(f"[watcher] +{len(added)} −{len(removed)}\n")
