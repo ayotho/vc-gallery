@@ -1892,6 +1892,16 @@ def _draft_filepath(gallery: Path, filename: str) -> str:
     return str((gallery / ".drafts" / f"{filename}.draft.json"))
 
 
+# Serializes the assets-INSERT + lastrowid read + prompts-INSERT sequence
+# in _create_draft. The shared sqlite3 connection (check_same_thread=False)
+# does NOT guarantee Cursor.lastrowid is per-cursor — under concurrent
+# requests it can reflect another thread's most-recent INSERT, which makes
+# the follow-up prompts row land under the wrong asset_id. Symptom: drafts
+# come out with each other's top-level refs (#94). Lock is cheap — drafts
+# stage at human rate, not server rate.
+_DRAFT_CREATE_LOCK = threading.Lock()
+
+
 def _create_draft(payload: dict) -> dict:
     """Stage a draft asset row.
 
@@ -1960,38 +1970,45 @@ def _create_draft(payload: dict) -> dict:
     }, ensure_ascii=False)
 
     try:
-        cur = conn.execute(
-            """INSERT INTO assets (
-                file_path, filename, media_type, size_bytes,
-                source_type, has_sidecar, status,
-                shot_id, scene, model, workflow, client, project,
-                notes, first_seen_at, last_updated_at
-            ) VALUES (?, ?, ?, 0,
-                'draft', 0, 'draft',
-                ?, ?, ?, ?, ?, ?,
-                ?, ?, ?)
-            """,
-            (
-                file_path, filename, media_type,
-                payload.get("shot_id"), payload.get("scene"),
-                payload.get("model") or inner.get("model"),
-                payload.get("workflow", "draft.video"),
-                payload.get("client"), payload.get("project"),
-                notes_blob, now, now,
-            ),
-        )
-        asset_id = cur.lastrowid
-        # Also write the prompt body to the prompts table so /api/assets/<id>
-        # returns it via the normal prompt path (preserves UI compatibility).
-        conn.execute(
-            """INSERT INTO prompts (asset_id, prompt_text, refs_json)
-               VALUES (?, ?, ?)
-               ON CONFLICT(asset_id) DO UPDATE SET
-                   prompt_text = excluded.prompt_text,
-                   refs_json = excluded.refs_json""",
-            (asset_id, inner.get("prompt", ""), json.dumps(image_refs, ensure_ascii=False)),
-        )
-        conn.commit()
+        # See _DRAFT_CREATE_LOCK comment above — serialize the INSERT+lastrowid+
+        # follow-up prompts-INSERT so concurrent requests don't cross-contaminate
+        # via the shared connection's lastrowid behavior. Use RETURNING id as a
+        # belt+suspenders read-back so we're not relying on Cursor.lastrowid at
+        # all under concurrency. SQLite 3.35+ (we're on 3.45+).
+        with _DRAFT_CREATE_LOCK:
+            cur = conn.execute(
+                """INSERT INTO assets (
+                    file_path, filename, media_type, size_bytes,
+                    source_type, has_sidecar, status,
+                    shot_id, scene, model, workflow, client, project,
+                    notes, first_seen_at, last_updated_at
+                ) VALUES (?, ?, ?, 0,
+                    'draft', 0, 'draft',
+                    ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?)
+                RETURNING id
+                """,
+                (
+                    file_path, filename, media_type,
+                    payload.get("shot_id"), payload.get("scene"),
+                    payload.get("model") or inner.get("model"),
+                    payload.get("workflow", "draft.video"),
+                    payload.get("client"), payload.get("project"),
+                    notes_blob, now, now,
+                ),
+            )
+            asset_id = cur.fetchone()[0]
+            # Also write the prompt body to the prompts table so /api/assets/<id>
+            # returns it via the normal prompt path (preserves UI compatibility).
+            conn.execute(
+                """INSERT INTO prompts (asset_id, prompt_text, refs_json)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(asset_id) DO UPDATE SET
+                       prompt_text = excluded.prompt_text,
+                       refs_json = excluded.refs_json""",
+                (asset_id, inner.get("prompt", ""), json.dumps(image_refs, ensure_ascii=False)),
+            )
+            conn.commit()
     except sqlite3.Error as e:
         return {"ok": False, "error": f"DB insert failed: {e}"}
 
