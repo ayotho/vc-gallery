@@ -2309,7 +2309,14 @@ async function fillDrawer(id) {
       ${asset.review_history.length === 0 ? '<li><span class="marker"></span><span>No review events yet</span><span class="when"></span></li>' :
         asset.review_history.map(r => {
           const when = new Date(r.reviewed_at * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-          return `<li><span class="marker" data-k="${r.to_status}"></span><span>${r.reviewer || 'system'} set status to <b>${r.to_status}</b>${r.note ? ' — ' + escapeHtml(r.note) : ''}</span><span class="when">${when}</span></li>`;
+          // Property-change rows (inherit, etc) carry from_status === to_status
+          // and a descriptive note. Don't pretend they were status changes —
+          // render the note directly.
+          const isPropertyChange = r.from_status === r.to_status;
+          const text = isPropertyChange
+            ? `${r.reviewer || 'system'} ${r.note ? escapeHtml(r.note) : 'updated properties'}`
+            : `${r.reviewer || 'system'} set status to <b>${r.to_status}</b>${r.note ? ' — ' + escapeHtml(r.note) : ''}`;
+          return `<li><span class="marker" data-k="${r.to_status}"></span><span>${text}</span><span class="when">${when}</span></li>`;
         }).join('')}
     </ul>
 
@@ -2721,15 +2728,21 @@ async function fillDrawer(id) {
 }
 
 function attachVersionStripDropHandlers(versionStrip, asset) {
-  versionStrip.addEventListener('dragover', (e) => {
+  // Use property assignment (ondragover/ondragleave/ondrop) not addEventListener.
+  // fillDrawer is called repeatedly (after status changes, refresh, post-drop
+  // re-select, etc) and each call landed here. addEventListener accumulated
+  // duplicate handlers — every refresh added another, so one drop fired N times
+  // (N inherit API calls, N audit-log rows in the drawer history). Property
+  // assignment overwrites the prior handler atomically, so exactly one is live.
+  versionStrip.ondragover = (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     versionStrip.classList.add('vs-drop-target');
-  });
-  versionStrip.addEventListener('dragleave', () => {
+  };
+  versionStrip.ondragleave = () => {
     versionStrip.classList.remove('vs-drop-target');
-  });
-  versionStrip.addEventListener('drop', async (e) => {
+  };
+  versionStrip.ondrop = async (e) => {
     e.preventDefault();
     versionStrip.classList.remove('vs-drop-target');
     const draggedId = Number(e.dataTransfer.getData('text/plain'));
@@ -2747,7 +2760,7 @@ function attachVersionStripDropHandlers(versionStrip, asset) {
     } catch (err) {
       flashToast('Drop failed: ' + err.message, 'error');
     }
-  });
+  };
 }
 
 function metaRow(k, v, mono) {
