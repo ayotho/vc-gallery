@@ -661,6 +661,20 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .prompt-box::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: linear-gradient(0deg, var(--surface-soft) 30%, transparent 100%); pointer-events: none; }
 .prompt-box.expanded::after { display: none; }
 .prompt-box.empty { color: #8a877f; font-style: italic; }
+/* Param group header inside Wrapper params (#92c) — subtle uppercase divider
+   between Generation / Quality / Timing / Output sections. */
+.meta-group-head {
+  font-family: var(--mono); font-size: 9px; font-weight: 600;
+  letter-spacing: 1px; color: #8a877f; text-transform: uppercase;
+  padding: 12px 0 6px; border-bottom: 1px solid var(--hairline-soft);
+  margin-bottom: 4px;
+}
+.meta-group-head:first-child { padding-top: 4px; }
+/* Computed video-model summary (#92c) — frames + runtime under Timing block. */
+.meta-summary {
+  font-family: var(--mono); font-size: 11px; color: #6f6c64;
+  padding: 8px 0 4px; font-style: italic;
+}
 /* Editable per-model params (#92b). Compact monospace inputs that match the
    read-only .meta-row .v look. Show focus state on edit. */
 .mp-input {
@@ -2427,14 +2441,40 @@ async function fillDrawer(id) {
       // Keys we never show in this section (handled elsewhere)
       const HIDDEN = new Set(['prompt', 'image', 'start_image', 'end_image', 'video', 'audio', 'media', 'refs', 'model', 'workflow', 'filename', 'gallery', 'client', 'project', 'shot_id', 'scene', 'asset_id', 'force']);
 
-      // 1. Typed inputs for active model's schema (always render even if
-      //    payload doesn't carry the key yet — director can set fresh values)
-      const typedRows = schemaKeys.map(k => {
-        const spec = schema.params[k];
-        const v = payload[k];
-        const inputHtml = renderModelParamInput(k, spec, v, asset.id);
-        return `<div class="meta-row"><span class="k">${escapeHtml(k.replace(/_/g, ' '))}</span><span class="v mono">${inputHtml}</span></div>`;
-      }).join('');
+      // 1. Typed inputs for active model's schema, grouped by purpose
+      //    (Generation / Quality / Timing / Output). Schema's `group` field
+      //    drives the visual grouping — video and image models naturally end
+      //    up with different group sets (image has no Timing, video has no
+      //    standalone count usually).
+      const GROUP_ORDER = ['core', 'quality', 'timing', 'output'];
+      const GROUP_LABELS = { core: 'Generation', quality: 'Quality', timing: 'Timing', output: 'Output' };
+      const grouped = {};
+      if (schema) {
+        schemaKeys.forEach(k => {
+          const spec = schema.params[k];
+          const g = spec.group || 'core';
+          if (!grouped[g]) grouped[g] = [];
+          grouped[g].push(k);
+        });
+      }
+      const typedRows = schema ? GROUP_ORDER.filter(g => grouped[g]).map(g => {
+        const header = `<div class="meta-group-head">${GROUP_LABELS[g]}</div>`;
+        const rows = grouped[g].map(k => {
+          const spec = schema.params[k];
+          const v = payload[k];
+          const inputHtml = renderModelParamInput(k, spec, v, asset.id);
+          return `<div class="meta-row"><span class="k">${escapeHtml(k.replace(/_/g, ' '))}</span><span class="v mono">${inputHtml}</span></div>`;
+        }).join('');
+        return header + rows;
+      }).join('') : '';
+
+      // Computed summary for video models — frames + runtime helps sanity-
+      // check duration before firing (cheap UX win for the video/image
+      // differentiation pass).
+      const isVideoModel = schema && schema.kind === 'video';
+      const videoSummary = isVideoModel && payload.duration
+        ? `<div class="meta-summary">~${Math.round(Number(payload.duration) * 24)} frames @ 24fps · ${payload.duration}s runtime</div>`
+        : '';
 
       // 2. Read-only rows for everything else in payload (staging notes,
       //    skip_sidecar, wait_timeout_seconds, etc).
@@ -2449,6 +2489,7 @@ async function fillDrawer(id) {
       <div class="section-head">Wrapper params${helpText}</div>
       <div class="meta-table">
         ${typedRows}
+        ${videoSummary}
         ${extraRows}
       </div>
     `;
