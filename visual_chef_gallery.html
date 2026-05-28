@@ -684,16 +684,6 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .ref-thumb:hover { border-color: var(--ink); transform: translateY(-1px); }
 .ref-thumb-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ref-thumb-img.broken { background: repeating-linear-gradient(45deg, #f4f2ec, #f4f2ec 8px, #e4e2dc 8px, #e4e2dc 16px); }
-/* External-reference placeholder (Higgsfield media UUID with no local cache hit).
-   Renders an external-link icon centered on a soft surface instead of broken-img. */
-.ref-thumb-img.ref-external {
-  display: flex; align-items: center; justify-content: center;
-  background: var(--surface-soft); color: var(--ink);
-}
-/* When ref-thumb is an <a> wrapper (gallery_asset or hf_uuid), strip default
-   link styling so it looks identical to the <div> variant. */
-a.ref-thumb { text-decoration: none; color: inherit; display: block; }
-a.ref-thumb.ref-thumb-linked:hover { border-color: var(--primary); }
 .ref-thumb-meta {
   position: absolute; left: 0; right: 0; bottom: 0;
   display: flex; align-items: center; gap: 6px;
@@ -2196,33 +2186,30 @@ async function fillDrawer(id) {
       : (asset.refs || []).map(r => ({ raw: r, kind: r.startsWith('http') ? 'url' : 'file', url: '', filename: r }));
     if (!resolved.length) return '';
     const cards = resolved.slice(0, 12).map((r, i) => {
-      const isGalleryAsset = r.kind === 'gallery_asset' && r.asset_id;
-      const isHfUuid = r.kind === 'hf_uuid';
       const src = r.url || (r.kind === 'url' ? r.raw : '');
       const safeName = escapeHtml(r.filename || r.raw || '');
-      // For hf_uuid refs, r.url is the external HF asset link — NOT an image src.
-      // Don't render it as an <img>; render an external-link placeholder card instead.
-      const imgSrc = isHfUuid ? '' : src;
       // draggable="false" on the img is critical: without it the browser's
       // native image-drag (drags the image URL, not a File) fires first and
       // shadows the parent .ref-thumb's dragstart. Disabling lets the parent
       // div take over via DownloadURL → real File drop.
-      const previewHtml = isHfUuid
-        ? `<div class="ref-thumb-img ref-external"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.55"><path d="M10 2h4v4"/><path d="M14 2L6 10"/><path d="M13 9v4a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h4"/></svg></div>`
-        : (imgSrc
-            ? `<img class="ref-thumb-img" loading="lazy" draggable="false" src="${imgSrc}" alt="${safeName}" onerror="this.classList.add('broken')">`
-            : `<div class="ref-thumb-img broken"></div>`);
-      // Copy button only when we have a fetchable image URL (not hf_uuid links).
-      const copyBtnHtml = imgSrc
-        ? `<button class="ref-copy-btn" data-copy-src="${imgSrc}" data-copy-name="${safeName}" title="Copy image to clipboard" aria-label="Copy image">
+      const previewHtml = src
+        ? `<img class="ref-thumb-img" loading="lazy" draggable="false" src="${src}" alt="${safeName}" onerror="this.classList.add('broken')">`
+        : `<div class="ref-thumb-img broken"></div>`;
+      // Copy button only when we have a fetchable URL — files via /ref?path=
+      // and direct URLs both work. Skip for refs with no resolved src.
+      const copyBtnHtml = src
+        ? `<button class="ref-copy-btn" data-copy-src="${src}" data-copy-name="${safeName}" title="Copy image to clipboard" aria-label="Copy image">
              <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
                <rect x="3.5" y="3.5" width="8" height="9" rx="1"/>
                <path d="M3.5 3.5 V2 a1 1 0 0 1 1 -1 H10 a1 1 0 0 1 1 1 V3.5"/>
              </svg>
            </button>`
         : '';
-      // Drag-out: only when we have a real fetchable image URL.
-      const dragAttrs = imgSrc ? `draggable="true" data-drag-url="${imgSrc}" data-drag-name="${safeName}"` : '';
+      // Drag-out: when src is a fetchable URL, make the thumb draggable so the
+      // director can drop it directly into Higgsfield / Finder / chat upload
+      // boxes. Uses Chrome's DownloadURL MIME type to hand the target a real
+      // File handle (not just a URL string).
+      const dragAttrs = src ? `draggable="true" data-drag-url="${src}" data-drag-name="${safeName}"` : '';
       // Remove-ref X button — only shown on drafts so the director can prune
       // a ref before firing. The raw path/url stored on the button lets the
       // handler match against payload arrays (image / start_image / refs etc).
@@ -2230,17 +2217,8 @@ async function fillDrawer(id) {
       const removeBtnHtml = isDraft && rawRef
         ? `<button class="ref-remove-btn" data-ref-raw="${escapeHtml(rawRef)}" data-ref-index="${i}" title="Remove this reference" aria-label="Remove reference">×</button>`
         : '';
-      // Click behavior:
-      // - gallery_asset → wrap card in <a> to navigate to that asset
-      // - hf_uuid → wrap card in <a> opening HF asset page in new tab
-      // - otherwise → plain <div>
-      const openAttrs = isGalleryAsset
-        ? `href="#asset/${r.asset_id}" data-asset-link="${r.asset_id}"`
-        : (isHfUuid ? `href="${escapeHtml(src)}" target="_blank" rel="noopener"` : '');
-      const tag = (isGalleryAsset || isHfUuid) ? 'a' : 'div';
-      const linkedClass = isGalleryAsset ? ' ref-thumb-linked' : (isHfUuid ? ' ref-thumb-external' : '');
       return `
-        <${tag} class="ref-thumb${linkedClass}" data-src="${imgSrc}" title="${safeName}" ${openAttrs} ${dragAttrs}>
+        <div class="ref-thumb" data-src="${src}" title="${safeName}" ${dragAttrs}>
           ${previewHtml}
           ${removeBtnHtml}
           ${copyBtnHtml}
@@ -2248,7 +2226,7 @@ async function fillDrawer(id) {
             <span class="ref-num">${String(i + 1).padStart(2, '0')}</span>
             <span class="ref-name">${safeName}</span>
           </div>
-        </${tag}>`;
+        </div>`;
     }).join('');
     return `
       <div class="section-head">References <span class="dim">— ${resolved.length}</span></div>
