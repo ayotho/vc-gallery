@@ -1118,18 +1118,92 @@ def _facet_counts(params: dict | None = None) -> dict:
     return out
 
 
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_HF_UPLOAD_CACHE_PATH = Path.home() / ".cache" / "claude-hf-uploads.json"
+
+# Reverse index: Higgsfield media_id → local filesystem path.
+# Built lazily from ~/.cache/claude-hf-uploads.json (per-machine forward cache
+# of sha256(file) → {media_id, last_path}). Rebuild when cache mtime changes.
+_HF_REVERSE_INDEX: dict[str, str] = {}
+_HF_REVERSE_INDEX_MTIME: float = 0.0
+
+
+def _hf_reverse_index() -> dict[str, str]:
+    """Return media_id → last_path map; rebuild if upload cache file changed."""
+    global _HF_REVERSE_INDEX, _HF_REVERSE_INDEX_MTIME
+    try:
+        mtime = _HF_UPLOAD_CACHE_PATH.stat().st_mtime
+    except OSError:
+        return {}
+    if mtime != _HF_REVERSE_INDEX_MTIME:
+        try:
+            cache = json.loads(_HF_UPLOAD_CACHE_PATH.read_text())
+        except (OSError, json.JSONDecodeError):
+            cache = {}
+        idx: dict[str, str] = {}
+        for entry in cache.values():
+            mid = entry.get("media_id")
+            path = entry.get("last_path")
+            if mid and path:
+                idx[mid] = path
+        _HF_REVERSE_INDEX = idx
+        _HF_REVERSE_INDEX_MTIME = mtime
+    return _HF_REVERSE_INDEX
+
+
 def _resolve_ref_to_url(ref: str, gallery: Path | None) -> dict:
     """Turn a ref string into something the UI can render.
 
-    refs come in three shapes from the wild:
+    refs come in four shapes from the wild:
+      - https:// URL → pass through as-is
+      - Higgsfield media UUID (no extension, no slashes) → reverse-lookup
+        upload cache; if hit, return as kind=gallery_asset with thumb +
+        clickable asset_id; otherwise kind=hf_uuid with link to HF asset page
       - Absolute or relative filesystem path → serve via /ref?path=…
       - Bare filename → assume it's in the gallery, serve via /ref?path=…
-      - https:// URL → pass through as-is
     """
     if not ref:
         return {"raw": "", "kind": "empty"}
     if ref.startswith(("http://", "https://")):
         return {"raw": ref, "kind": "url", "url": ref}
+
+    # Higgsfield media UUID — these are server-side identifiers, not files.
+    # Try to resolve back to a gallery asset via the per-machine upload cache.
+    if _UUID_RE.match(ref):
+        local_path = _hf_reverse_index().get(ref)
+        if local_path:
+            try:
+                row = STATE.conn().execute(
+                    "SELECT id, filename, thumb_path FROM assets WHERE file_path = ?",
+                    (local_path,),
+                ).fetchone()
+            except Exception:
+                row = None
+            if row:
+                from urllib.parse import quote
+                thumb_url = (
+                    f"/thumb?path={quote(row['thumb_path'])}"
+                    if row["thumb_path"]
+                    else f"/ref?path={quote(local_path)}"
+                )
+                return {
+                    "raw": ref,
+                    "kind": "gallery_asset",
+                    "asset_id": row["id"],
+                    "filename": row["filename"],
+                    "url": thumb_url,
+                    "uuid": ref,
+                }
+        # Fall through: UUID not in cache OR cache hit but no gallery row.
+        # Render as styled external-reference card with a link out to HF.
+        return {
+            "raw": ref,
+            "kind": "hf_uuid",
+            "uuid": ref,
+            "filename": f"HF media {ref[:8]}…",
+            "url": f"https://higgsfield.ai/asset/all/{ref}",
+        }
+
     p = Path(ref)
     # Bare filename → resolve into gallery
     if not p.is_absolute() and gallery is not None and "/" not in ref:
