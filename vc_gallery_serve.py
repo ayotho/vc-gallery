@@ -1271,22 +1271,27 @@ def _get_asset(asset_id: int) -> Optional[dict]:
             for r in (note_data.get("image_refs") or [])
         ]
 
-    # Patch 2026-05-14 (drawer screenshot bug): for non-draft assets, the
-    # `notes` column sometimes carries the wrapper's pulled_from metadata
-    # JSON ({"pulled_from": ..., "asset_uuid": ..., "shot": ..., ...}) — the
-    # HF link is already extracted into asset.hf_url, so leaking the raw JSON
-    # into the director's NOTES textarea is just noise. Detect that shape and
-    # blank the notes field so the director sees an empty editable space.
+    # For non-draft assets, the `notes` column sometimes carries metadata JSON
+    # (wrapper's pulled_from / asset_uuid / shot / leftover draft state with
+    # is_draft + user_notes). Surface user_notes if present so director's
+    # typed notes survive the draft → firing → review transition. If the JSON
+    # is pure system metadata with no user_notes, blank the field so the raw
+    # JSON doesn't leak into the textarea.
     elif row["notes"]:
         try:
             note_data = json.loads(row["notes"])
-            if isinstance(note_data, dict) and (
-                "pulled_from" in note_data
-                or "asset_uuid" in note_data
-                or "is_draft" in note_data
-            ):
-                asset["notes"] = ""
-                asset["_system_notes_hidden"] = True  # client can inspect via /api/assets/<id>?show_system=1 later
+            if isinstance(note_data, dict):
+                user_notes = note_data.get("user_notes")
+                if isinstance(user_notes, str):
+                    asset["notes"] = user_notes
+                    asset["_system_notes_hidden"] = True
+                elif (
+                    "pulled_from" in note_data
+                    or "asset_uuid" in note_data
+                    or "is_draft" in note_data
+                ):
+                    asset["notes"] = ""
+                    asset["_system_notes_hidden"] = True
         except (json.JSONDecodeError, TypeError):
             pass  # plain-text notes — leave as-is
 
@@ -1407,22 +1412,23 @@ def _patch_asset(asset_id: int, payload: dict) -> Optional[dict]:
             v = lib.normalize_status(v)
             if v not in lib.VALID_STATUSES:
                 continue
-        # 2026-05-21 fix: on drafts, the `notes` column is a JSON blob carrying
-        # the draft payload + image_refs. A plain PATCH `{notes: "..."}` would
-        # clobber that blob and destroy the draft (the drawer's auto-save was
-        # doing exactly this — director reported 2026-05-21 with screenshot).
-        # Route user-facing notes through note_data["user_notes"] instead so
-        # the blob is merged in place. _row_to_asset reads this back into
-        # asset["notes"] so the UI sees the same string it saved.
-        if k == "notes" and row["status"] == "draft":
+        # When the `notes` column holds a JSON blob (draft payload, HF wrapper
+        # metadata like pulled_from/asset_uuid, or leftover draft state on a
+        # post-fire asset), a plain PATCH `{notes: "..."}` would clobber that
+        # blob and destroy historical metadata. Route user-facing notes
+        # through note_data["user_notes"] instead so the blob is merged in
+        # place. _get_asset reads this back into asset["notes"] so the UI
+        # sees the same string it saved. Applies regardless of asset status —
+        # the draft → firing → review transition preserves the JSON blob, so
+        # user notes need the same routing across all states.
+        if k == "notes" and row["notes"]:
             try:
-                note_data = json.loads(row["notes"]) if row["notes"] else {}
-                if not isinstance(note_data, dict):
-                    note_data = {}
+                existing = json.loads(row["notes"])
+                if isinstance(existing, dict):
+                    existing["user_notes"] = v or ""
+                    v = json.dumps(existing, ensure_ascii=False)
             except (json.JSONDecodeError, TypeError):
-                note_data = {}
-            note_data["user_notes"] = v or ""
-            v = json.dumps(note_data, ensure_ascii=False)
+                pass  # plain-text notes column — write `v` directly
         sets.append(f"{k} = ?")
         values.append(v)
         changes[k] = v
