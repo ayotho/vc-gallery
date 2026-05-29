@@ -2034,6 +2034,9 @@ def _create_draft(payload: dict) -> dict:
         return {"ok": False, "error": "no working folder set"}
     file_path = _draft_filepath(gallery, filename)
     now = time.time()
+    # Canonicalise gallery in the payload — always replace with the absolute
+    # path from STATE.folder so the wrapper can't use a relative path later.
+    inner["gallery"] = str(gallery)
     notes_blob = json.dumps({
         "is_draft": True,
         "payload": inner,
@@ -2313,7 +2316,12 @@ def _fire_draft(asset_id: int) -> dict:
     )
     payload.setdefault("shot_id", row["shot_id"] or "")
     payload.setdefault("scene", row["scene"] or "")
-    payload.setdefault("gallery", str(STATE.folder) if STATE.folder else "")
+    # Always override gallery with STATE.folder (absolute path). Never trust
+    # whatever the agent wrote — agents sometimes pass relative paths like
+    # "BTW_Documentary/Episode_2" which resolve relative to the wrapper's cwd
+    # (usually the vc-gallery repo dir), writing files to the wrong location
+    # and writing the DB row to an ephemeral shadow DB the server never sees.
+    payload["gallery"] = str(STATE.folder) if STATE.folder else payload.get("gallery", "")
     payload.setdefault("skip_sidecar", True)
     # Issue #27 — pass the draft's asset_id so the wrapper mutates the existing
     # row instead of inserting a duplicate. Without this, draft→fire→success
