@@ -807,7 +807,14 @@ def _row_to_asset(row: sqlite3.Row, thumb_dir: Path) -> dict:
         except (json.JSONDecodeError, TypeError):
             note_data = {}
         if isinstance(note_data, dict) and note_data.get("is_draft"):
-            image_refs = note_data.get("image_refs", []) or []
+            image_refs_raw = note_data.get("image_refs", []) or []
+            # Deduplicate while preserving order (same guard as _get_asset).
+            _seen_ir: set[str] = set()
+            image_refs: list[str] = []
+            for _r in image_refs_raw:
+                if _r not in _seen_ir:
+                    _seen_ir.add(_r)
+                    image_refs.append(_r)
             # Resolve ref paths to {url, filename, exists} so the card render
             # can use the FIRST ref as a thumbnail. Cheap — drafts are a small
             # subset and we already iterate the notes dict for the payload.
@@ -1204,8 +1211,17 @@ def _get_asset(asset_id: int) -> Optional[dict]:
     if prompt:
         asset["prompt"] = prompt["prompt_text"] or ""
         raw_refs = json.loads(prompt["refs_json"]) if prompt["refs_json"] else []
-        asset["refs"] = raw_refs  # backward compat: stays as list of strings
-        asset["refs_resolved"] = [_resolve_ref_to_url(r, STATE.folder) for r in raw_refs]
+        # Deduplicate while preserving order — agents occasionally stage the
+        # same path twice (e.g. image=[ref, ref] typo). Display-layer dedup
+        # is the safest catch-all regardless of how duplicates got in.
+        seen: set[str] = set()
+        deduped_refs: list[str] = []
+        for r in raw_refs:
+            if r not in seen:
+                seen.add(r)
+                deduped_refs.append(r)
+        asset["refs"] = deduped_refs  # backward compat: stays as list of strings
+        asset["refs_resolved"] = [_resolve_ref_to_url(r, STATE.folder) for r in deduped_refs]
     else:
         asset["prompt"] = ""
         asset["refs"] = []
