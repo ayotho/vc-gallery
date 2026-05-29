@@ -2330,17 +2330,22 @@ async function fillDrawer(id) {
     if (!resolved.length) return '';
     const cards = resolved.slice(0, 12).map((r, i) => {
       const isExternal = r.kind === 'external_uuid';
+      const isMissing = r.kind === 'external_missing';
+      const isPlaceholder = isExternal || isMissing;
       const src = r.url || (r.kind === 'url' ? r.raw : '');
       const safeName = escapeHtml(r.filename || r.raw || '');
       // draggable="false" on the img is critical: without it the browser's
       // native image-drag (drags the image URL, not a File) fires first and
       // shadows the parent .ref-thumb's dragstart. Disabling lets the parent
       // div take over via DownloadURL → real File drop.
-      // External UUID refs (Higgsfield media identifiers with no local file)
-      // render a styled placeholder instead of an <img> — avoids the
-      // broken-image icon that would 404 on /ref?path=<uuid>.
-      const previewHtml = isExternal
-        ? `<div class="ref-thumb-img ref-external"><div class="ref-external-label">external</div></div>`
+      // Placeholder kinds:
+      //   external_uuid   — Higgsfield media id, no local file
+      //   external_missing — gallery-relative path, file no longer on disk
+      // Both render a styled card with NO <img> (so no broken-image icon),
+      // and a labeled badge ('external' / 'missing') showing the cause.
+      const placeholderLabel = isMissing ? 'missing' : 'external';
+      const previewHtml = isPlaceholder
+        ? `<div class="ref-thumb-img ref-external"><div class="ref-external-label">${placeholderLabel}</div></div>`
         : (src
             ? `<img class="ref-thumb-img" loading="lazy" draggable="false" src="${src}" alt="${safeName}" onerror="this.classList.add('broken')">`
             : `<div class="ref-thumb-img broken"></div>`);
