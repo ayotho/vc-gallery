@@ -57,6 +57,7 @@ VALID_WORKFLOWS = {
     "2-pass",                  # 2-pass refinement work
     "backfill",                # retro-applied fixes
     "frame-capture",           # stills pulled from picture lock
+    "concept-test",            # exploratory / proof-of-concept gens
     # Transitional escape hatch — emits a warning, does NOT reject
     "unknown",
 }

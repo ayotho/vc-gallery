@@ -10,8 +10,7 @@
     "gallery",
     "filename",
     "client",
-    "project",
-    "workflow"
+    "project"
   ],
   "properties": {
     "prompt": {
@@ -126,6 +125,7 @@
     },
     "workflow": {
       "type": "string",
+      "default": "unknown",
       "enum": [
         "createframe",
         "decgi",
@@ -143,9 +143,10 @@
         "v2v",
         "lipsync",
         "cinema-studio",
+        "concept-test",
         "unknown"
       ],
-      "description": "Must match VALID_WORKFLOWS in write_companion_note.py. Runtime validator imports VALID_WORKFLOWS at validate-time and asserts this enum stays in sync. Image: createframe/decgi/faceswap/style-transfer/multi-angle*/retexture/character-reference/2-pass/backfill/frame-capture. Video: i2v (image-to-video), t2v (text-to-video), v2v (video-to-video / restyle), lipsync (audio-driven lip animation), cinema-studio (Cinematic Studio multi-shot)."
+      "description": "Optional; defaults to 'unknown' when omitted (gallery layer auto-coerces invalid values based on model class — image models → createframe, video models → i2v/t2v based on refs). Must match VALID_WORKFLOWS in write_companion_note.py. Runtime validator imports VALID_WORKFLOWS at validate-time and asserts this enum stays in sync. Image: createframe/decgi/faceswap/style-transfer/multi-angle*/retexture/character-reference/2-pass/backfill/frame-capture/concept-test. Video: i2v (image-to-video), t2v (text-to-video), v2v (video-to-video / restyle), lipsync (audio-driven lip animation), cinema-studio (Cinematic Studio multi-shot)."
     },
     "asset_id": {
       "type": ["integer", "string"],
