@@ -424,7 +424,7 @@ def _write_db_row(payload: dict, target: Path, prompt: str, refs: list[str], job
             "client": payload.get("client", ""),
             "project": payload.get("project", ""),
             "shot_id": payload.get("shot_id", ""),
-            "scene": payload.get("scene", ""),
+            "scene": payload.get("scene") or payload.get("segment", ""),
             "parent_filename": payload.get("parent", ""),
             "session": payload.get("session", ""),
             "session_date": payload.get("session_date", ""),
@@ -562,6 +562,15 @@ def run(payload: dict, dry_run: bool = False, gallery_root: Optional[str] = None
             append_jsonl(safety_log_path(), rec)
         except OSError as e:
             print(f"[ledger] WARN: append failed: {e}", file=sys.stderr)
+
+    # ─── 0.5. Normalise 'segment' → 'scene' ───
+    # UI label renamed to 'Segment' 2026-05-29 but DB column stays 'scene'.
+    # Agents that use the new label pass 'segment' in the payload and hit
+    # schema rejection. Normalise before validation so both keys work.
+    if "segment" in payload and "scene" not in payload:
+        payload["scene"] = payload.pop("segment")
+    elif "segment" in payload:
+        payload.pop("segment")  # scene already set — drop duplicate
 
     # ─── 1. Schema validation ───
     errors = validate_payload(payload, vc_gallery_root=gallery_root)

@@ -290,7 +290,13 @@
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]*$",
       "maxLength": 64,
-      "description": "Scene slug from episode.yaml (e.g. emerald_dmt, sandman_intro). Paired with shot_id at fire time for automatic canvas DB tagging — avoids manual PATCH sweeps post-fire. Added 2026-05-15 to support auto-tag rule."
+      "description": "Scene/segment slug (e.g. emerald_dmt, dream_bedroom). Canonical DB column is 'scene' but UI label was renamed to 'Segment' 2026-05-29. Both 'scene' and 'segment' keys accepted — see below."
+    },
+    "segment": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]*$",
+      "maxLength": 64,
+      "description": "Alias for 'scene' — accepted so agents using the new UI label 'segment' don't hit schema rejection. The wrapper normalises this to the 'scene' DB column at write time."
     },
     "session": {
       "type": "string",
