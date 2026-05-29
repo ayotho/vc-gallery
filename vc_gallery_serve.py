@@ -1892,6 +1892,48 @@ def _draft_filepath(gallery: Path, filename: str) -> str:
     return str((gallery / ".drafts" / f"{filename}.draft.json"))
 
 
+# Valid workflow enum values (mirrors hf_payload.schema.json / VALID_WORKFLOWS
+# in write_companion_note.py). Used by _safe_workflow to coerce invalid /
+# missing workflow values to a model-appropriate default so drafts don't
+# fall through to schema-reject at fire time.
+_VALID_WORKFLOWS = {
+    "createframe", "decgi", "faceswap", "style-transfer",
+    "multi-angle", "multi-angle-retexture", "retexture",
+    "character-reference", "2-pass", "backfill", "frame-capture",
+    "i2v", "t2v", "v2v", "lipsync", "cinema-studio",
+    "concept-test", "unknown",
+}
+
+# Models that produce video output. Used by _safe_workflow to pick i2v vs
+# createframe when the supplied workflow is missing/invalid.
+_VIDEO_MODELS_PREFIX = ("seedance", "kling", "cinematic_studio_video", "veo", "wan", "hailuo", "sora")
+
+
+def _safe_workflow(supplied: str | None, model: str | None, has_refs: bool) -> str:
+    """Coerce a workflow value to a schema-valid default if missing or invalid.
+
+    Used at both draft-stage and fire-time so directors can omit workflow OR
+    type a custom tag without hitting wrapper schema rejection. Model class
+    determines image vs video default; refs presence picks i2v vs t2v for
+    video models.
+
+    Examples:
+      _safe_workflow(None, 'nano_banana_2', False) -> 'createframe'
+      _safe_workflow('draft.fire', 'seedance_2_0', True) -> 'i2v'
+      _safe_workflow('concept-test', 'nano_banana_2', False) -> 'concept-test' (valid)
+      _safe_workflow('', 'cinematic_studio_video_v2', True) -> 'cinema-studio'
+    """
+    if supplied and supplied in _VALID_WORKFLOWS:
+        return supplied
+    m = (model or "").lower()
+    if "cinematic_studio_video" in m:
+        return "cinema-studio"
+    if any(m.startswith(p) for p in _VIDEO_MODELS_PREFIX):
+        return "i2v" if has_refs else "t2v"
+    # Image / unknown / default
+    return "createframe"
+
+
 # Serializes the assets-INSERT + lastrowid read + prompts-INSERT sequence
 # in _create_draft. The shared sqlite3 connection (check_same_thread=False)
 # does NOT guarantee Cursor.lastrowid is per-cursor — under concurrent
@@ -1992,7 +2034,14 @@ def _create_draft(payload: dict) -> dict:
                     file_path, filename, media_type,
                     payload.get("shot_id"), payload.get("scene"),
                     payload.get("model") or inner.get("model"),
-                    payload.get("workflow", "draft.video"),
+                    _safe_workflow(
+                        # Check inner payload first (director sets workflow
+                        # inside payload.payload via editable params), fall
+                        # back to outer envelope.
+                        inner.get("workflow") or payload.get("workflow"),
+                        payload.get("model") or inner.get("model"),
+                        bool(image_refs),
+                    ),
                     payload.get("client"), payload.get("project"),
                     notes_blob, now, now,
                 ),
@@ -2220,7 +2269,16 @@ def _fire_draft(asset_id: int) -> dict:
     payload.setdefault("filename", row["filename"])
     payload.setdefault("client", row["client"] or "unknown")
     payload.setdefault("project", row["project"] or "unknown")
-    payload.setdefault("workflow", row["workflow"] or "draft.fire")
+    # Workflow coercion — use _safe_workflow so a missing OR invalid value
+    # (e.g. director typed 'concept-test' in editable params, or row carries
+    # legacy 'draft.fire'/'draft.video') becomes a valid enum value the
+    # wrapper schema accepts. Model class picks image vs video default.
+    _refs = (note_data.get("image_refs") if isinstance(note_data, dict) else None) or []
+    payload["workflow"] = _safe_workflow(
+        payload.get("workflow") or row["workflow"],
+        payload.get("model") or row["model"],
+        bool(_refs),
+    )
     payload.setdefault("shot_id", row["shot_id"] or "")
     payload.setdefault("scene", row["scene"] or "")
     payload.setdefault("gallery", str(STATE.folder) if STATE.folder else "")
