@@ -334,19 +334,68 @@ def _build_create_argv(payload: dict) -> list[str]:
 
 
 def _download(url: str, target: Path) -> bool:
-    """curl URL to target (overwrites). Returns True on success."""
-    try:
-        proc = subprocess.run(
-            ["curl", "-sSL", "-o", str(target), url],
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if proc.returncode != 0:
+    """curl URL to target with retry + hard read-back verification.
+
+    Issue #109 (recurring 2026-05-29/30) — wrapper reported '✓ + db | exit: 0'
+    but the PNG was absent on disk. Two root-cause candidates:
+    1. Transient CDN error that curl considered non-fatal (empty 200 body).
+    2. OS page-cache / APFS-sparse returning a stale st_size that made
+       stat() think the write succeeded before it was flushed.
+
+    Mitigations:
+    1. curl --retry 3 --retry-delay 2 --retry-all-errors so transient
+       CDN 5xx/timeouts are retried transparently inside the subprocess.
+    2. Post-download: open() + read(1) to force a real disk read — not just
+       stat(). This confirms the file is physically on disk, not just in the
+       kernel write-back buffer.
+    3. If the first attempt yields a zero-byte file (empty 200 race),
+       wait 3s then retry once before reporting failure.
+    """
+    import time as _time
+    import sys as _sys
+
+    def _attempt() -> bool:
+        try:
+            proc = subprocess.run(
+                [
+                    "curl", "-sSL",
+                    "--retry", "3", "--retry-delay", "2",
+                    "--retry-all-errors",
+                    "-o", str(target), url,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=360,
+            )
+            if proc.returncode != 0:
+                return False
+            if not target.exists():
+                return False
+            if target.stat().st_size == 0:
+                return False
+            # Hard read-back: open() + read(1) forces kernel to confirm
+            # the file is readable on disk (not just buffered).
+            with open(target, "rb") as fh:
+                if not fh.read(1):
+                    return False
+            return True
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             return False
-        return target.exists() and target.stat().st_size > 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
+
+    if _attempt():
+        return True
+
+    # Retry once after a pause — catches transient CDN races (empty 200 body)
+    print("  ⚠ download: first attempt yielded empty/missing file, retrying in 3s…",
+          file=_sys.stderr)
+    # Remove any zero-byte partial before retry so curl starts clean
+    try:
+        if target.exists() and target.stat().st_size == 0:
+            target.unlink()
+    except OSError:
+        pass
+    _time.sleep(3)
+    return _attempt()
 
 
 def _write_db_row(payload: dict, target: Path, prompt: str, refs: list[str], job_id: Optional[str] = None) -> bool:
