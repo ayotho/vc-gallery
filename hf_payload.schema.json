@@ -284,7 +284,7 @@
       "type": "string",
       "pattern": "^([A-Za-z][A-Za-z0-9_-]*|)$",
       "maxLength": 32,
-      "description": "Shot identifier. Canonical form is SH<digits>[A-Za-z]{0,4} (e.g. SH1430, SH050C, SH040ABC). Also accepts free-text identifiers for drafts/experiments (e.g. TEST, RND_dreamscape, cref_a) or empty string. Pattern relaxed 2026-05-15 to support exploratory work."
+      "description": "Shot identifier. Two canonical forms: (1) Single shot: SH<digits>[A-Z] — e.g. SH630, SH430A, SH1430B. (2) Unified range prefix: SH<start>-<end_suffix>_<gen> — e.g. SH630-40_A, SH630-40_B, SH630-40_C where SH630-40 is the shared range prefix and _A/_B/_C are the Gen 1/Gen 2/Gen 3 shot slots. Also accepts free-text identifiers for exploration (e.g. TEST, RND_dreamscape) or empty string. Pattern relaxed 2026-05-15."
     },
     "scene": {
       "type": "string",
