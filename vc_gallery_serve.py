@@ -1159,10 +1159,26 @@ def _resolve_ref_to_url(ref: str, gallery: Path | None) -> dict:
         }
     p = Path(ref)
     # Bare filename → resolve into gallery
+    resolved_in_gallery = False
     if not p.is_absolute() and gallery is not None and "/" not in ref:
         cand = gallery / ref
         if cand.exists():
             p = cand
+            resolved_in_gallery = True
+    # Existence check: absolute paths check directly; bare filenames are
+    # only present if the gallery probe above resolved them.
+    exists = p.exists() if p.is_absolute() else resolved_in_gallery
+    # Missing-file refs (absolute path or bare filename that no longer
+    # exists on disk) — render as styled placeholder, same UX as the
+    # UUID 'external' case. Otherwise the <img> /ref?path=... 404s and
+    # the browser draws its broken-image icon.
+    if not exists:
+        short = p.name if len(p.name) <= 20 else (p.name[:17] + '…')
+        return {
+            "raw": ref,
+            "kind": "external_missing",
+            "filename": f"missing · {short}",
+        }
     # Build a /ref?path= URL so the browser can request it through the server
     from urllib.parse import quote
     return {
@@ -1170,7 +1186,7 @@ def _resolve_ref_to_url(ref: str, gallery: Path | None) -> dict:
         "kind": "file",
         "filename": p.name,
         "url": f"/ref?path={quote(str(p))}",
-        "exists": p.exists() if p.is_absolute() else None,
+        "exists": True,
     }
 
 
