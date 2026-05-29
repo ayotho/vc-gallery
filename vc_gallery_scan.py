@@ -369,6 +369,14 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
                      row["sidecar_path"], row["has_sidecar"], owning_draft["id"]),
                 )
                 _upsert_job(conn, owning_draft["id"], row)
+                # Issue #111 — when the wrapper exits 6 (DB write blocked by
+                # server lock), it writes a <filename>.failed.json sidecar
+                # alongside the PNG. The wrapper already stored the payload on
+                # disk during fire-time. Rescue prompt + refs from that sidecar
+                # so the gallery drawer shows them instead of "No prompt recorded".
+                _rescue_prompt_from_failed_json(
+                    conn, owning_draft["id"], Path(row["file_path"])
+                )
                 return owning_draft["id"], "updated"
             return owning_draft["id"], "deferred"
 
@@ -393,6 +401,9 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
         )
         asset_id = cur.lastrowid
         _upsert_job(conn, asset_id, row)
+        # Rescue prompt + refs from a co-located .failed.json if present
+        # (wrapper exited 6 — image saved, DB write failed).
+        _rescue_prompt_from_failed_json(conn, asset_id, Path(row["file_path"]))
         return asset_id, "added"
 
     (asset_id, old_size, old_mtime, old_source_type, old_model,
@@ -473,6 +484,58 @@ def _upsert_job(conn, asset_id: int, row: dict) -> None:
                source_url = excluded.source_url""",
         (asset_id, job_id, url),
     )
+
+
+def _rescue_prompt_from_failed_json(conn, asset_id: int, media_path: Path) -> None:
+    """Rescue prompt + refs from a <name>.failed.json sidecar (issue #111).
+
+    When the wrapper exits 6 (DB write blocked by server WAL lock), it saves
+    a <filename>.failed.json next to the PNG containing wrapper metadata + the
+    path to the original payload file. Read that payload and upsert
+    prompts.prompt_text / prompts.refs_json so the gallery drawer shows the
+    generation context instead of "No prompt recorded".
+
+    Idempotent — skips when prompts row already has a non-empty prompt_text.
+    """
+    failed_path = Path(str(media_path) + ".failed.json")
+    if not failed_path.exists():
+        return
+    try:
+        import json as _json
+        meta = _json.loads(failed_path.read_text())
+        # Only rescue for exit-6 failures (DB write failed, image OK)
+        if meta.get("exit_code") not in (6, None):
+            return
+        # Find the payload file from argv
+        argv = meta.get("argv", [])
+        payload_file: str | None = None
+        for i, a in enumerate(argv):
+            if a == "--payload-file" and i + 1 < len(argv):
+                payload_file = argv[i + 1]
+                break
+        if not payload_file or not Path(payload_file).exists():
+            return
+        payload = _json.loads(Path(payload_file).read_text())
+        prompt = payload.get("prompt", "")
+        if not prompt:
+            return
+        refs: list[str] = []
+        for key in ("image", "start_image", "end_image", "video", "audio", "media", "refs"):
+            v = payload.get(key)
+            if isinstance(v, list):
+                refs.extend([str(x) for x in v if x])
+            elif isinstance(v, str) and v:
+                refs.append(v)
+        conn.execute(
+            """INSERT INTO prompts (asset_id, prompt_text, refs_json)
+               VALUES (?, ?, ?)
+               ON CONFLICT(asset_id) DO UPDATE SET
+                   prompt_text = CASE WHEN excluded.prompt_text != '' AND (prompts.prompt_text IS NULL OR prompts.prompt_text = '') THEN excluded.prompt_text ELSE prompts.prompt_text END,
+                   refs_json   = CASE WHEN excluded.refs_json != '[]' AND (prompts.refs_json IS NULL OR prompts.refs_json = '[]') THEN excluded.refs_json ELSE prompts.refs_json END""",
+            (asset_id, prompt, _json.dumps(refs, ensure_ascii=False)),
+        )
+    except Exception:
+        pass  # rescue is best-effort; never break the scan
 
 
 def _upsert_prompt(conn, asset_id: int, prompt_row: dict | None, has_sidecar: bool = False) -> None:
