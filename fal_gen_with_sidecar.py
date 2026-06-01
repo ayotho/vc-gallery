@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -128,8 +129,14 @@ def _upload_or_url(fal_client, value: str) -> str:
     path = Path(value).expanduser()
     if not path.exists():
         raise FileNotFoundError(value)
-    path = _shrink_image_if_needed(path)
-    return fal_client.upload_file(str(path))
+    shrunk = _shrink_image_if_needed(path)
+    try:
+        return fal_client.upload_file(str(shrunk))
+    finally:
+        # _shrink_image_if_needed only returns a different path when it wrote a
+        # downscaled copy into a fresh temp dir — remove it so fires don't leak.
+        if shrunk != path:
+            shutil.rmtree(shrunk.parent, ignore_errors=True)
 
 
 def _build_fal_arguments(payload: dict) -> dict:

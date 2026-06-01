@@ -82,3 +82,11 @@ Backlog covered: #7, #10. (recurring-cron iteration)
 - **#10 collision/force**: non-empty real asset at target → `_reserve_filename` raises FileExistsError → wrapper returns failed_collision (no clobber, no spend). `force=true` → intentional overwrite. 0-byte orphan from a failed run → auto-reclaimed (no false collision). All by-design + correct. PASS. ✓
 - No bugs found.
 - Backlog status: #2 concurrency already covered by the baseline matrix (8 simultaneous fires, 0 rate-limit failures). #3 Chrome MCP needs director to select a browser (deferred — can't drive Chrome unattended per the browser-selection rule). Free backlog effectively exhausted; further iterations = deeper code audit / re-verification.
+
+### Iter 7 — deep audit: temp-dir leak fix + consistency (2026-06-02 ~05:43)
+Deep code audit (subagent hit a transient socket error → done manually). 
+- 🐞→✅ **BUG: temp-dir leak in `_shrink_image_if_needed`.** Every oversized-ref (>10MB) fire created a `fal_ref_*` temp dir via tempfile.mkdtemp that was never removed (3 already accumulated in TMPDIR). Over an overnight batch of 4K-ref fires these pile up. FIX: `_upload_or_url` now `shutil.rmtree`s the temp dir in a `finally` after upload (only when a downscaled copy was made). Verified: upload (free) of the 30MB ref leaves 0 leaked dirs; cleared the pre-existing leaks. Commit on branch. `import shutil` added.
+- **audit — refs uploaded ONCE**: confirmed refs upload before the count loop (line 276) and reused via `args["image_urls"]` for all N iterations — no per-count re-upload waste. ✓
+- **audit — DB↔disk consistency**: 13 fal_test rows; only SH0098 "missing" on disk = the unfired human-test draft (expected); 0 zero-byte among the 12 videos; orphans endpoint missing_file_rows=0. ✓
+- **audit — count partial-failure semantics**: if an output fails, the wrapper returns first-non-OK exit and the draft row stays re-fireable (idx0 failure → draft not mutated, no clobber, no data loss). Acceptable behavior, not a bug.
+- Remaining: #3 Chrome MCP (needs director to select browser — deferred).
