@@ -106,3 +106,8 @@ Deep code audit (subagent hit a transient socket error → done manually).
 - **Compile**: all touched modules compile clean. ✓
 - **Happy-path regression** (post ALL qa fixes — count cap, temp-leak cleanup, count UI field, FAL_KEY fallback): dry-run of a standard 8s audio-on single-ref draft produces correct fal args (duration "8", generate_audio true, image_urls=[ref]). Cumulative edits did not regress the basic flow. ✓
 - Branch is in a shippable state. No bugs.
+
+### Iter 11 — URL passthrough + start_image=ref behavior (2026-06-02 ~07:43)
+- **URL/data ref passthrough**: `_upload_or_url` returns http/https/data: refs unchanged (no upload, no shrink) — verified with a fake client that errors if upload is attempted. Agents can pass remote URLs (catbox/fal) as refs. PASS. ✓
+- **start_image key → image_urls (ref-only)**: a payload using the `start_image` key still maps to `image_urls` (NOT `start_image_url`). Confirms the director's requirement: refs are references, never auto-defaulted to a start frame. PASS. ✓
+- No bugs.
