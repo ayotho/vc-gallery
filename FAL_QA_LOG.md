@@ -95,3 +95,8 @@ Deep code audit (subagent hit a transient socket error → done manually).
 - **#3 Chrome MCP**: 2 browsers connected (Mac laptop, AyPC). Selecting one requires the browser-safety AskUserQuestion, which would block the unattended loop → **Chrome deferred — needs director**. (Human fire path already proven by endpoint-equivalence: the Fire button calls POST /api/draft/{id}/fire, exercised 12× this session. SH0098 staged for the director's own click.)
 - ✅ **NEW TOOL: vc-eval is no longer a stub.** Wrote `vc_gallery_eval.py` (engine-agnostic asset evaluator: ffprobe integrity, DB↔disk, zero-byte, source_url presence, board grouping; filters by scene/shot/status/provider; exit 0/1 for CI) and rewrote `.claude/skills/vc-eval/SKILL.md` with real docs + trigger description. Verified on scene=fal_test → 13/13 pass, specs + per-shot counts shown (SH0300×3, SH0303×2), audio True on SH0030 only. `/vc-eval` is now runnable on all assets as the director asked.
 - No bugs found this iteration.
+
+### Iter 9 — full-gallery vc-eval regression (2026-06-02 ~06:43)
+- **vc-eval --provider fal**: 12/12 PASS. All fal videos valid (1920×1080, ~3s), audio True only on SH0030. Clean. ✓
+- **vc-eval full gallery (731 assets, 7.6s)**: 621 pass / 110 fail — but **0 fal-provider failures**. The 110 are PRE-EXISTING legacy hygiene unrelated to this branch: 103 assets with no shot_id ("won't group on board"), 7 "file missing on disk" (old drafts/moved files). NOT fixed — out of scope for the fal branch; surfaced for the director as a future gallery-cleanup item.
+- vc_gallery_eval.py validated at scale (731 assets in <8s). No fal bugs.
