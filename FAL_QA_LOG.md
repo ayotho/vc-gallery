@@ -67,3 +67,11 @@ First iteration delivered by the RECURRING cron 94db26bd (fired on idle after th
 - **#6 thumbnails / board render**: assets table has no sha column — it uses `thumb_path` (NULL until first request) + lazy generation. `thumb_url` is computed from `thumb_key(file_path)`; the `/thumb/<key>.jpg` route generates on demand. Verified for SH000: HTTP 200, real 480×270 JPEG (18.5 KB). Board renders fal videos correctly. NULL thumb_path is by-design, not a bug. PASS. ✓
 - No bugs found this iteration.
 - Backlog remaining: #2 concurrency, #3 Chrome MCP, #4 UI param flow, #7 downscale edges, #9 aspect/duration bounds, #10 collisions/force.
+
+### Iter 5 — UI param flow + aspect/duration bounds (2026-06-02 ~04:43)
+Backlog covered: #4, #9. (recurring-cron iteration)
+- **#4 UI param flow**: staged a draft with non-default params (duration=15, aspect_ratio=9:16, generate_audio=true, shot_type=intelligent, count=2, 2 refs); confirmed they persist in the draft's inner payload AND map correctly to the wrapper's fal args (duration "15", aspect_ratio "9:16", generate_audio true, shot_type "intelligent", image_urls=[2]). Human-set params reach the fal API. PASS. ✓
+- **#9 aspect/duration bounds**: 9:16 ratio + duration 15 (upper bound) accepted + mapped. PASS. ✓
+- Test draft (SH0091) deleted after — board stays clean.
+- No bugs found.
+- Backlog remaining: #2 concurrency, #3 Chrome MCP, #7 downscale edges, #10 collisions/force.
