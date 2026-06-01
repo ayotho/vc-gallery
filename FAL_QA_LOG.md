@@ -75,3 +75,10 @@ Backlog covered: #4, #9. (recurring-cron iteration)
 - Test draft (SH0091) deleted after — board stays clean.
 - No bugs found.
 - Backlog remaining: #2 concurrency, #3 Chrome MCP, #7 downscale edges, #10 collisions/force.
+
+### Iter 6 — downscale edges + collision/force (2026-06-02 ~05:13)
+Backlog covered: #7, #10. (recurring-cron iteration)
+- **#7 downscale edges**: non-image >10MB → `_shrink_image_if_needed` returns original gracefully (sips fails → no crash; fal rejects at upload → caught EXIT_SUBMIT). Small non-image → passthrough. Real ref 9.64 MiB (<10 MiB limit) → no shrink. PASS. ✓
+- **#10 collision/force**: non-empty real asset at target → `_reserve_filename` raises FileExistsError → wrapper returns failed_collision (no clobber, no spend). `force=true` → intentional overwrite. 0-byte orphan from a failed run → auto-reclaimed (no false collision). All by-design + correct. PASS. ✓
+- No bugs found.
+- Backlog status: #2 concurrency already covered by the baseline matrix (8 simultaneous fires, 0 rate-limit failures). #3 Chrome MCP needs director to select a browser (deferred — can't drive Chrome unattended per the browser-selection rule). Free backlog effectively exhausted; further iterations = deeper code audit / re-verification.
