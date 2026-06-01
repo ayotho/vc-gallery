@@ -60,3 +60,10 @@ Backlog covered: #1 (error paths), loop-trigger verification.
 - The one-shot cron `4faa7676` (scheduled 04:00) fired and delivered its LOOP-VERIFY prompt to the assistant once the `/goal` cleared and the REPL went idle — confirming the earlier catch-22 analysis exactly: cron needs idle, and idle only opens when no goal Stop hook is preempting it. This is a genuine cron-delivered iteration, processed end-to-end.
 - QA step (routing regression): seedance-2-10s → higgsfield ✓ · fal-ai/x → fal ✓. PASS.
 - **/loop is verified working end-to-end via the actual cron mechanism.** The recurring QA cron `94db26bd` (every :13/:43) remains armed and will keep firing on idle.
+
+### Iter 4 — recurring-cron iteration: FAL_KEY fallback + thumbnails (2026-06-02 ~04:13)
+First iteration delivered by the RECURRING cron 94db26bd (fired on idle after the goal cleared). Backlog covered: #8, #6.
+- **#8 FAL_KEY fallback**: with FAL_KEY unset in env, `_load_fal_key_fallback()` repopulates it from `~/.claude/env.sh`. Unattended fal fires authenticate even if the server was started without the key sourced. PASS. ✓
+- **#6 thumbnails / board render**: assets table has no sha column — it uses `thumb_path` (NULL until first request) + lazy generation. `thumb_url` is computed from `thumb_key(file_path)`; the `/thumb/<key>.jpg` route generates on demand. Verified for SH000: HTTP 200, real 480×270 JPEG (18.5 KB). Board renders fal videos correctly. NULL thumb_path is by-design, not a bug. PASS. ✓
+- No bugs found this iteration.
+- Backlog remaining: #2 concurrency, #3 Chrome MCP, #4 UI param flow, #7 downscale edges, #9 aspect/duration bounds, #10 collisions/force.
