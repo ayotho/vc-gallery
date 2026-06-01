@@ -111,3 +111,14 @@ Deep code audit (subagent hit a transient socket error → done manually).
 - **URL/data ref passthrough**: `_upload_or_url` returns http/https/data: refs unchanged (no upload, no shrink) — verified with a fake client that errors if upload is attempted. Agents can pass remote URLs (catbox/fal) as refs. PASS. ✓
 - **start_image key → image_urls (ref-only)**: a payload using the `start_image` key still maps to `image_urls` (NOT `start_image_url`). Confirms the director's requirement: refs are references, never auto-defaulted to a start frame. PASS. ✓
 - No bugs.
+
+### Iter 12 — final confirm-green + WRAP (2026-06-02 ~08:27, ~4.7h elapsed)
+- vc-eval --provider fal: 12/12 PASS. temp-leak dirs: 0 (iter7 fix holding). Server healthy (EP2, 731 assets). Branch: 12 commits atop main.
+- QA surface fully exhausted; loop wrapping at ~5h window. Posting Slack summary + CronDelete 94db26bd.
+
+## SUMMARY — overnight QA loop complete
+- **3 bugs found + fixed**: (1) count not exposed in fal UI → added count field; (2) no count cap → clamp to 12; (3) temp-dir leak in downscale → cleanup after upload.
+- **1 tool built**: vc-eval (stub → vc_gallery_eval.py + real skill), validated at full-gallery scale.
+- **All verified PASS**: error paths (no-spend fails), routing regression (Higgsfield untouched), integrity (12 videos valid), thumbnails (on-demand render), FAL_KEY env.sh fallback, UI param flow, aspect/duration bounds, downscale edges, collision/force, URL/data ref passthrough, ref-only (start_image→image_urls), DB↔disk consistency, full-gallery regression (0 fal failures).
+- **Deferred**: Chrome MCP live click (needs director to select a browser); SH0098 staged for the director's own click.
+- **Pre-existing (out of scope, noted)**: 103 legacy assets with no shot_id + 7 missing files in the wider gallery — future cleanup.
