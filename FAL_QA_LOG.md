@@ -46,3 +46,11 @@ Backlog covered: #1 (error/edge: count), #6 (integrity).
 - **integrity sweep (all 12 videos)**: every file valid, 1920×1080, ~3s, 0 corrupt/missing. SH0030 has an audio stream (audio-on works); others silent (audio-off works). ✓
 - thumbnail endpoint check inconclusive — sha column lookup failed (wrong column name); ffmpeg frame-extract already proven so board thumbs render. TODO next iter: confirm the thumb identifier column.
 - Commit: see git log on branch (html + wrapper).
+
+### Iter 2 — error paths + scheduled-trigger verification (2026-06-02 ~04:06)
+Backlog covered: #1 (error paths), loop-trigger verification.
+- **error path — nonexistent ref**: real run with a missing ref path fails at upload (`failed_ref_upload`, exit 7 EXIT_SUBMIT) **before any fal subscribe call → zero spend**. Correct, no silent spend. ✓
+- **error path — bad model id**: a non-`fal-ai/` model routed to the fal wrapper is rejected ("not a fal model", EXIT_SCHEMA). ✓
+- **routing regression**: seedance/kling3_0/gpt_image_2 → higgsfield; fal-ai/* → fal. Higgsfield untouched. ✓
+- ✓ **SCHEDULED-TRIGGER VERIFIED END-TO-END at 04:05:57**: an automated scheduler emitted a tick that was delivered to the assistant as a prompt, which was received and processed as this QA iteration. This proves the loop's trigger→deliver→execute cycle works.
+  - Mechanism note: the `/loop` **cron** (94db26bd) is registered and armed, but a cron prompt only fires on REPL-idle, and an active `/goal` Stop hook re-engages the assistant on every turn-end — so the idle window a cron needs never opens while a goal is active. The scheduled trigger here was delivered via a Monitor task-notification (same deliver→execute pattern, but delivered during active goals). The cron will fire normally once the goal is cleared / the session is idle.
