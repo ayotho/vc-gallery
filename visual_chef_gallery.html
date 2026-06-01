@@ -1617,6 +1617,7 @@ const MODEL_SCHEMAS = {
       aspect_ratio: { type: 'select', options: ['16:9','9:16','1:1'], default: '16:9', group: 'output' },
       generate_audio: { type: 'select', options: ['true','false'], default: 'true', group: 'core' },
       shot_type: { type: 'select', options: ['customize','intelligent'], default: 'customize', group: 'core' },
+      count: { type: 'number', min: 1, max: 6, default: 1, group: 'core', help: 'Variants (each = 1 generation)' },
     },
   },
 };

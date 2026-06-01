@@ -47,6 +47,8 @@ FAL_KLING_O3_R2V = "fal-ai/kling-video/o3/pro/reference-to-video"
 # fal rejects reference images larger than 10 MB ("file_too_large"). Studio 4K
 # stills are ~30 MB, so over-limit local refs are auto-downscaled before upload.
 _FAL_MAX_REF_BYTES = 10 * 1024 * 1024
+# Safety cap on count so a fat-finger (e.g. count=99) can't trigger runaway spend.
+_FAL_MAX_COUNT = 12
 EXIT_TO_CLASS = {
     EXIT_OK: "ok",
     EXIT_OTHER: "unexpected",
@@ -283,6 +285,10 @@ def run(payload: dict, dry_run: bool = False, quiet: bool = False) -> int:
     # Quantity: count>1 fires N independent generations (refs uploaded once,
     # reused for every call). Outputs are named v…_1/_2/… via _split_filename.
     requested_count = max(1, int(payload.get("count", 1) or 1))
+    if requested_count > _FAL_MAX_COUNT:
+        print(f"⚠ count={requested_count} exceeds cap {_FAL_MAX_COUNT}; clamping to avoid runaway spend", file=sys.stderr)
+        emit("count_clamped", requested=requested_count, capped=_FAL_MAX_COUNT)
+        requested_count = _FAL_MAX_COUNT
     planned = [_split_filename(filename, i, requested_count) for i in range(requested_count)]
     emit("prepared", endpoint=model, requested_count=requested_count)
 
