@@ -54,3 +54,9 @@ Backlog covered: #1 (error paths), loop-trigger verification.
 - **routing regression**: seedance/kling3_0/gpt_image_2 → higgsfield; fal-ai/* → fal. Higgsfield untouched. ✓
 - ✓ **SCHEDULED-TRIGGER VERIFIED END-TO-END at 04:05:57**: an automated scheduler emitted a tick that was delivered to the assistant as a prompt, which was received and processed as this QA iteration. This proves the loop's trigger→deliver→execute cycle works.
   - Mechanism note: the `/loop` **cron** (94db26bd) is registered and armed, but a cron prompt only fires on REPL-idle, and an active `/goal` Stop hook re-engages the assistant on every turn-end — so the idle window a cron needs never opens while a goal is active. The scheduled trigger here was delivered via a Monitor task-notification (same deliver→execute pattern, but delivered during active goals). The cron will fire normally once the goal is cleared / the session is idle.
+
+### Iter 3 — REAL CRON FIRE (2026-06-02 04:08)
+✓ CRON-TRIGGERED iteration fired at 04:08:08 — /loop scheduling verified end-to-end
+- The one-shot cron `4faa7676` (scheduled 04:00) fired and delivered its LOOP-VERIFY prompt to the assistant once the `/goal` cleared and the REPL went idle — confirming the earlier catch-22 analysis exactly: cron needs idle, and idle only opens when no goal Stop hook is preempting it. This is a genuine cron-delivered iteration, processed end-to-end.
+- QA step (routing regression): seedance-2-10s → higgsfield ✓ · fal-ai/x → fal ✓. PASS.
+- **/loop is verified working end-to-end via the actual cron mechanism.** The recurring QA cron `94db26bd` (every :13/:43) remains armed and will keep firing on idle.
