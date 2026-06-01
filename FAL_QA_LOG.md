@@ -100,3 +100,9 @@ Deep code audit (subagent hit a transient socket error → done manually).
 - **vc-eval --provider fal**: 12/12 PASS. All fal videos valid (1920×1080, ~3s), audio True only on SH0030. Clean. ✓
 - **vc-eval full gallery (731 assets, 7.6s)**: 621 pass / 110 fail — but **0 fal-provider failures**. The 110 are PRE-EXISTING legacy hygiene unrelated to this branch: 103 assets with no shot_id ("won't group on board"), 7 "file missing on disk" (old drafts/moved files). NOT fixed — out of scope for the fal branch; surfaced for the director as a future gallery-cleanup item.
 - vc_gallery_eval.py validated at scale (731 assets in <8s). No fal bugs.
+
+### Iter 10 — final-state branch coherence check (2026-06-02 ~07:13)
+- **Change scope vs main** (code only): fal_gen_with_sidecar.py (+463, new), vc_gallery_eval.py (+154, new), vc_gallery_lib.py (+14), vc_gallery_serve.py (+36), visual_chef_gallery.html (+18). Surgical; Higgsfield path untouched.
+- **Compile**: all touched modules compile clean. ✓
+- **Happy-path regression** (post ALL qa fixes — count cap, temp-leak cleanup, count UI field, FAL_KEY fallback): dry-run of a standard 8s audio-on single-ref draft produces correct fal args (duration "8", generate_audio true, image_urls=[ref]). Cumulative edits did not regress the basic flow. ✓
+- Branch is in a shippable state. No bugs.
