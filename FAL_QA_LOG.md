@@ -90,3 +90,8 @@ Deep code audit (subagent hit a transient socket error → done manually).
 - **audit — DB↔disk consistency**: 13 fal_test rows; only SH0098 "missing" on disk = the unfired human-test draft (expected); 0 zero-byte among the 12 videos; orphans endpoint missing_file_rows=0. ✓
 - **audit — count partial-failure semantics**: if an output fails, the wrapper returns first-non-OK exit and the draft row stays re-fireable (idx0 failure → draft not mutated, no clobber, no data loss). Acceptable behavior, not a bug.
 - Remaining: #3 Chrome MCP (needs director to select browser — deferred).
+
+### Iter 8 — Chrome deferred + built out vc-eval (2026-06-02 ~06:43)
+- **#3 Chrome MCP**: 2 browsers connected (Mac laptop, AyPC). Selecting one requires the browser-safety AskUserQuestion, which would block the unattended loop → **Chrome deferred — needs director**. (Human fire path already proven by endpoint-equivalence: the Fire button calls POST /api/draft/{id}/fire, exercised 12× this session. SH0098 staged for the director's own click.)
+- ✅ **NEW TOOL: vc-eval is no longer a stub.** Wrote `vc_gallery_eval.py` (engine-agnostic asset evaluator: ffprobe integrity, DB↔disk, zero-byte, source_url presence, board grouping; filters by scene/shot/status/provider; exit 0/1 for CI) and rewrote `.claude/skills/vc-eval/SKILL.md` with real docs + trigger description. Verified on scene=fal_test → 13/13 pass, specs + per-shot counts shown (SH0300×3, SH0303×2), audio True on SH0030 only. `/vc-eval` is now runnable on all assets as the director asked.
+- No bugs found this iteration.
