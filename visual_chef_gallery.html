@@ -1606,6 +1606,19 @@ const MODEL_SCHEMAS = {
       aspect_ratio: { type: 'select', options: ['16:9','9:16','1:1'], default: '16:9', group: 'output' },
     },
   },
+  'fal-ai/kling-video/o3/pro/reference-to-video': {
+    label: 'fal · Kling O3 Pro — reference to video',
+    kind: 'video',
+    // Reference URLs only: the draft's 1–4 reference images become image_urls,
+    // referenced in the prompt as @Image1…@Image4. No start frame required.
+    // Refs over 10 MB are auto-downscaled by the wrapper before upload.
+    params: {
+      duration: { type: 'number', min: 3, max: 15, default: 8, group: 'timing', help: 'Seconds' },
+      aspect_ratio: { type: 'select', options: ['16:9','9:16','1:1'], default: '16:9', group: 'output' },
+      generate_audio: { type: 'select', options: ['true','false'], default: 'true', group: 'core' },
+      shot_type: { type: 'select', options: ['customize','intelligent'], default: 'customize', group: 'core' },
+    },
+  },
 };
 
 // Render a single typed input for the editable Wrapper Params UI. Returns the
@@ -2964,7 +2977,9 @@ async function fillDrawer(id) {
   const fireBtn = $('#btn-fire-draft');
   if (fireBtn) {
     fireBtn.addEventListener('click', async () => {
-      if (!confirm(`Fire ${asset.filename}? This will spend Higgsfield credits.`)) return;
+      const engine = ((asset.draft && asset.draft.payload && asset.draft.payload.engine)
+        || ((asset.draft && asset.draft.payload && String(asset.draft.payload.model || '').startsWith('fal-ai/')) ? 'fal' : 'Higgsfield'));
+      if (!confirm(`Fire ${asset.filename}? This will spend ${engine} credits.`)) return;
       fireBtn.disabled = true;
       fireBtn.textContent = 'Firing…';
       try {

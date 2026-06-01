@@ -8,10 +8,12 @@ license = { text = "MIT" }
 authors = [{ name = "Ayo Thomas" }]
 dependencies = [
     "pyyaml>=6.0",
-    # Standard library covers everything else (no Flask — BaseHTTPRequestHandler).
+    "fal-client>=0.7.0",
+    "fal>=1.75.6",
     # Optional runtime deps:
     #   ffmpeg / ffprobe must be on PATH for thumbnail extraction
     #   higgsfield CLI for hf_gen_with_sidecar.py
+    #   fal CLI / FAL_KEY for fal_gen_with_sidecar.py
 ]
 
 [project.scripts]
@@ -29,6 +31,7 @@ py-modules = [
     "vc_gallery_test",
     "vc_gallery_backfill_hf_links",
     "hf_gen_with_sidecar",
+    "fal_gen_with_sidecar",
     "hf_envelope_parse",
     "hf_upload_cache",
     "jsonl_append",

@@ -515,7 +515,8 @@ def upsert_asset_direct(
     metadata keys (all optional unless noted):
       status, shot_id, scene, model, workflow, pass_num, variant,
       client, project, parent_filename, session, session_date, score,
-      prompt_text, refs, hf_job_id, hf_job_url, has_sidecar, sidecar_path, notes.
+      prompt_text, refs, job_provider, provider_job_id, source_url, hf_job_id,
+      hf_job_url, has_sidecar, sidecar_path, notes.
 
     Handles assets + prompts + jobs in one transaction. Returns
     (asset_id, 'added' | 'updated' | 'mutated').
@@ -662,17 +663,18 @@ def upsert_asset_direct(
             (asset_id, prompt_text, _json.dumps(refs, ensure_ascii=False)),
         )
 
-    hf_url = metadata.get("hf_job_url") or ""
-    hf_id = metadata.get("hf_job_id") or ""
-    if hf_url:
+    source_url = metadata.get("source_url") or metadata.get("hf_job_url") or ""
+    provider = metadata.get("job_provider") or ("higgsfield" if metadata.get("hf_job_url") else "")
+    provider_job_id = metadata.get("provider_job_id") or metadata.get("hf_job_id") or ""
+    if source_url:
         conn.execute(
             """INSERT INTO jobs (asset_id, provider, provider_job_id, source_url)
-               VALUES (?, 'higgsfield', ?, ?)
+               VALUES (?, ?, ?, ?)
                ON CONFLICT(asset_id) DO UPDATE SET
                    provider = excluded.provider,
                    provider_job_id = excluded.provider_job_id,
                    source_url = excluded.source_url""",
-            (asset_id, hf_id, hf_url),
+            (asset_id, provider, provider_job_id, source_url),
         )
 
     return asset_id, action

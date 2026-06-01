@@ -60,6 +60,7 @@ from jsonl_append import append_jsonl  # noqa: E402
 
 # Wrapper path used by draft.fire endpoint
 WRAPPER_SCRIPT = _HERE / "hf_gen_with_sidecar.py"
+FAL_WRAPPER_SCRIPT = _HERE / "fal_gen_with_sidecar.py"
 
 
 SERVER_VERSION = "0.1.0"
@@ -1938,7 +1939,7 @@ _VALID_WORKFLOWS = {
 
 # Models that produce video output. Used by _safe_workflow to pick i2v vs
 # createframe when the supplied workflow is missing/invalid.
-_VIDEO_MODELS_PREFIX = ("seedance", "kling", "cinematic_studio_video", "veo", "wan", "hailuo", "sora")
+_VIDEO_MODELS_PREFIX = ("seedance", "kling", "cinematic_studio_video", "veo", "wan", "hailuo", "sora", "fal-ai/")
 
 
 def _safe_workflow(supplied: str | None, model: str | None, has_refs: bool) -> str:
@@ -1964,6 +1965,17 @@ def _safe_workflow(supplied: str | None, model: str | None, has_refs: bool) -> s
         return "i2v" if has_refs else "t2v"
     # Image / unknown / default
     return "createframe"
+
+
+def _engine_for_payload(payload: dict) -> str:
+    """Return the generation engine for a draft payload."""
+    engine = str(payload.get("engine") or "").strip().lower()
+    model = str(payload.get("model") or "").strip().lower()
+    if engine in {"fal", "higgsfield"}:
+        return engine
+    if model.startswith("fal-ai/"):
+        return "fal"
+    return "higgsfield"
 
 
 # Serializes the assets-INSERT + lastrowid read + prompts-INSERT sequence
@@ -2328,21 +2340,25 @@ def _fire_draft(asset_id: int) -> dict:
     # left a "ghost" row at the .drafts/ path + a "real" row at the gallery
     # path. With it, ONE row flows through draft → firing → review.
     payload["asset_id"] = asset_id
-
-    # Strip fields the wrapper schema doesn't accept
-    payload.pop("asset_id", None)
+    engine = _engine_for_payload(payload)
+    wrapper_payload = dict(payload)
+    if engine == "fal":
+        wrapper_payload["engine"] = engine
+    else:
+        wrapper_payload.pop("engine", None)
 
     # Write the payload to a temp file the wrapper can read
     import tempfile
     fd, tmp_path = tempfile.mkstemp(prefix=f"draft_{asset_id}_", suffix=".json")
     try:
         with os.fdopen(fd, "w") as fp:
-            json.dump(payload, fp, ensure_ascii=False)
+            json.dump(wrapper_payload, fp, ensure_ascii=False)
     except OSError as e:
         return {"ok": False, "error": f"failed to write payload: {e}"}
 
-    if not WRAPPER_SCRIPT.exists():
-        return {"ok": False, "error": f"wrapper not found: {WRAPPER_SCRIPT}"}
+    wrapper_script = FAL_WRAPPER_SCRIPT if engine == "fal" else WRAPPER_SCRIPT
+    if not wrapper_script.exists():
+        return {"ok": False, "error": f"wrapper not found: {wrapper_script}"}
 
     # Compute the wrapper's per-fire log path so the UI can tail it later.
     # Patch 2026-05-14 (C1 follow-up): the wrapper used to append a timestamp
@@ -2357,7 +2373,7 @@ def _fire_draft(asset_id: int) -> dict:
     try:
         proc = subprocess.Popen(
             [
-                sys.executable, str(WRAPPER_SCRIPT),
+                sys.executable, str(wrapper_script),
                 "--payload-file", tmp_path,
                 "--quiet",
                 "--log-path", str(log_path),
@@ -2396,6 +2412,7 @@ def _fire_draft(asset_id: int) -> dict:
         "gallery": str(STATE.folder) if STATE.folder else None,
         "model": model_id,
         "workflow": payload.get("workflow"),
+        "engine": engine,
         "shot_id": row["shot_id"],
         "client": row["client"],
         "project": row["project"],
@@ -2415,6 +2432,7 @@ def _fire_draft(asset_id: int) -> dict:
         "pid": proc.pid,
         "payload_file": tmp_path,
         "model": model_id,
+        "engine": engine,
         "shot_id": row["shot_id"],
     }, source="api")
 
@@ -2427,7 +2445,7 @@ def _fire_draft(asset_id: int) -> dict:
     )
     conn.commit()
     STATE.mark_changed()
-    return {"ok": True, "pid": proc.pid, "payload_file": tmp_path}
+    return {"ok": True, "pid": proc.pid, "payload_file": tmp_path, "engine": engine}
 
 
 def _scene_overview() -> dict:
