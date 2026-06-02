@@ -517,8 +517,10 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .scene-band-label.alt { color: #6f6c64; }
 .scene-band-label.review-band { color: #e67e22; }
 .scene-band-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-.scene-band-grid .scene-card { width: 120px; cursor: pointer; }
+.scene-band-grid .scene-card { width: 120px; cursor: pointer; position: relative; }
 .scene-band-grid .scene-card img { width: 120px; height: 75px; object-fit: cover; border-radius: var(--r-sm); border: 1px solid var(--hairline); display: block; }
+.scene-band-grid .scene-card .sc-video-mark { position: absolute; top: 5px; right: 5px; width: 18px; height: 18px; border-radius: var(--r-full); background: rgba(255,255,255,0.92); backdrop-filter: blur(4px); display: inline-flex; align-items: center; justify-content: center; color: var(--ink); pointer-events: none; }
+.scene-band-grid .scene-card .sc-duration { position: absolute; bottom: 24px; right: 5px; font-family: var(--mono); font-size: 9px; font-weight: 500; color: #fff; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); padding: 1px 5px; border-radius: var(--r-pill); pointer-events: none; }
 .scene-band-grid .scene-card img.hero-ring { border: 2px solid var(--ink); box-shadow: 0 0 0 2px var(--block-lime); }
 .scene-band-grid .scene-card .sc-label { font-size: 11px; font-weight: 440; margin: 3px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
 /* ---- Shots view (group by shot_id) ---- */
@@ -574,7 +576,7 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .card-meta { font-family: var(--mono); font-size: 11px; color: #6f6c64; letter-spacing: 0.3px; text-transform: uppercase; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex-shrink: 1; }
 .card-meta .raw { color: #b07f3e; }
 
-.quick { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; gap: 6px; opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; }
+.quick { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; gap: 6px; opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; z-index: 4; }
 .card:hover .quick { opacity: 1; transform: translateY(0); }
 .card:hover .duration { opacity: 0; }
 .quick button { flex: 1; height: 30px; background: rgba(255,255,255,0.95); backdrop-filter: blur(6px); color: var(--ink); border-radius: var(--r-pill); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.5px; font-weight: 500; text-transform: uppercase; }
@@ -655,6 +657,14 @@ body.density-s .badge .dot { width: 8px; height: 8px; }
 .section-head .dim { color: #8a877f; font-weight: 400; }
 .section-head .act { font-family: var(--sans); text-transform: none; letter-spacing: -0.1px; font-size: 13px; font-weight: 480; color: var(--ink); cursor: pointer; padding: 6px 10px; border-radius: var(--r-pill); }
 .section-head .act:hover { background: var(--surface-soft); }
+/* Collapsible drawer sections — fold low-signal blocks so a draft can be scanned
+   at a glance. Chevron is absolutely positioned so the existing right-aligned
+   count/act controls keep their layout. State persists per section. */
+.section-head.collapsible { position: relative; padding-left: 16px; cursor: pointer; user-select: none; }
+.section-head.collapsible::before { content: '▾'; position: absolute; left: 0; top: 50%; transform: translateY(-50%); font-size: 9px; color: #8a877f; transition: transform .12s ease; }
+.section-head.collapsible.collapsed::before { transform: translateY(-50%) rotate(-90deg); }
+.section-head.collapsible:hover::before { color: var(--ink); }
+.dsec-body[hidden] { display: none; }
 
 .prompt-box { background: var(--surface-soft); border-radius: var(--r-md); padding: var(--s-md); font-family: var(--mono); font-size: 13px; line-height: 1.7; letter-spacing: 0.1px; color: var(--ink); font-weight: 400; max-height: 240px; overflow: hidden; position: relative; white-space: pre-wrap; word-break: break-word; }
 .prompt-box.expanded { max-height: none; }
@@ -1620,6 +1630,20 @@ const MODEL_SCHEMAS = {
       count: { type: 'number', min: 1, max: 6, default: 1, group: 'core', help: 'Variants (each = 1 generation)' },
     },
   },
+  'fal-ai/kling-video/o3/4k/reference-to-video': {
+    label: 'fal · Kling O3 4K — reference to video',
+    kind: 'video',
+    // Same as the standard fal Kling O3 R2V but native 4K output. Refs → image_urls
+    // (1–4, @Image1…@Image4), no start frame; refs >10 MB auto-downscaled.
+    // COST: ~$0.42/sec (≈$3.36 / 8s clip) — ~3–4× the standard tier. Hero shots, not batches.
+    params: {
+      duration: { type: 'number', min: 3, max: 15, default: 8, group: 'timing', help: 'Seconds' },
+      aspect_ratio: { type: 'select', options: ['16:9','9:16','1:1'], default: '16:9', group: 'output' },
+      generate_audio: { type: 'select', options: ['true','false'], default: 'true', group: 'core' },
+      shot_type: { type: 'select', options: ['customize','intelligent'], default: 'customize', group: 'core' },
+      count: { type: 'number', min: 1, max: 6, default: 1, group: 'core', help: 'Variants (each = 1 generation; 4K is pricey)' },
+    },
+  },
 };
 
 // Render a single typed input for the editable Wrapper Params UI. Returns the
@@ -2029,7 +2053,7 @@ function cardEl(asset, idx) {
         vid.loop = true;
         vid.playsInline = true;
         vid.preload = 'metadata';
-        vid.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; object-fit:cover;';
+        vid.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:1; pointer-events:none;';
         thumb.appendChild(vid);
         vid.play().catch(() => {});
       }, 220);  // small delay so hovering past cards doesn't fire 20 requests
@@ -2231,6 +2255,55 @@ function renderMultiSelectChrome() {
 
 // -------- Drawer ------------------------------------------------------
 
+// Sections collapsed by default (low-signal boilerplate). Everything else
+// (status, prompt, references, notes) starts open.
+const DRAWER_SECTION_DEFAULT_COLLAPSED = { metadata: true, wrapper: true, history: true };
+const DRAWER_SECTIONS_KEY = 'vc_drawer_sections';
+
+function loadDrawerSectionState() {
+  try { return JSON.parse(localStorage.getItem(DRAWER_SECTIONS_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveDrawerSectionState(key, collapsed) {
+  try {
+    const s = loadDrawerSectionState();
+    s[key] = collapsed;
+    localStorage.setItem(DRAWER_SECTIONS_KEY, JSON.stringify(s));
+  } catch {}
+}
+
+// Wrap each labelled section's content (everything between its header and the
+// next header / the sticky action bar) in a toggle-able body, then apply the
+// persisted-or-default collapsed state and wire the header click.
+function setupDrawerSections(body) {
+  const saved = loadDrawerSectionState();
+  body.querySelectorAll('.section-head[data-sec]').forEach(head => {
+    const key = head.dataset.sec;
+    const wrap = document.createElement('div');
+    wrap.className = 'dsec-body';
+    let n = head.nextElementSibling;
+    while (n && !n.classList.contains('section-head') && !n.classList.contains('actions')) {
+      const next = n.nextElementSibling;
+      wrap.appendChild(n);
+      n = next;
+    }
+    head.after(wrap);
+    head.classList.add('collapsible');
+    const collapsed = key in saved ? !!saved[key] : !!DRAWER_SECTION_DEFAULT_COLLAPSED[key];
+    head.classList.toggle('collapsed', collapsed);
+    wrap.hidden = collapsed;
+    head.addEventListener('click', (e) => {
+      // Don't toggle when the click lands on an inner control (e.g. the
+      // Prompt header's "Expand · Copy" action).
+      if (e.target.closest('.act')) return;
+      const nowCollapsed = !head.classList.contains('collapsed');
+      head.classList.toggle('collapsed', nowCollapsed);
+      wrap.hidden = nowCollapsed;
+      saveDrawerSectionState(key, nowCollapsed);
+    });
+  });
+}
+
 async function selectAsset(id) {
   state.selectedId = id;
   state.selectedIndex = state.items.findIndex(a => a.id === id);
@@ -2397,7 +2470,7 @@ async function fillDrawer(id) {
         </div>`;
     }).join('');
     return `
-      <div class="section-head">References <span class="dim">— ${resolved.length}</span></div>
+      <div class="section-head" data-sec="references">References <span class="dim">— ${resolved.length}</span></div>
       <div class="refs-grid">${cards}</div>`;
   })();
 
@@ -2415,10 +2488,10 @@ async function fillDrawer(id) {
       </div>
     ` : ''}
 
-    <div class="section-head">Status <span class="dim">click to change</span></div>
+    <div class="section-head" data-sec="status">Status <span class="dim">click to change</span></div>
     <div class="status-pills" id="drawer-pills"></div>
 
-    <div class="section-head">Metadata</div>
+    <div class="section-head" data-sec="metadata">Metadata</div>
     <div class="meta-table">
       ${metaRowEditable('Shot', asset.shot_id || '', 'shot_id')}
       ${metaRowEditable('Segment', asset.scene || '', 'scene')}
@@ -2508,7 +2581,7 @@ async function fillDrawer(id) {
 
       const helpText = schema ? `<span class="dim"> — ${escapeHtml(schema.label)}</span>` : '<span class="dim"> — unknown model, params read-only</span>';
       return `
-      <div class="section-head">Wrapper params${helpText}</div>
+      <div class="section-head" data-sec="wrapper">Wrapper params${helpText}</div>
       <div class="meta-table">
         ${typedRows}
         ${videoSummary}
@@ -2517,7 +2590,7 @@ async function fillDrawer(id) {
     `;
     })() : ''}
 
-    <div class="section-head">Prompt <span class="act" id="prompt-expand">${(asset.prompt && !isDraft) ? 'Expand · Copy' : (isDraft ? 'Auto-save on blur' : '')}</span></div>
+    <div class="section-head" data-sec="prompt">Prompt <span class="act" id="prompt-expand">${(asset.prompt && !isDraft) ? 'Expand · Copy' : (isDraft ? 'Auto-save on blur' : '')}</span></div>
     ${isDraft
       ? `<textarea class="prompt-box-edit" id="prompt-edit" placeholder="Write your prompt…">${escapeHtml(asset.prompt || '')}</textarea>
          <div class="prompt-foot">
@@ -2529,14 +2602,14 @@ async function fillDrawer(id) {
 
     ${refsHtml}
 
-    <div class="section-head">Notes <span class="dim">auto-save on blur</span></div>
+    <div class="section-head" data-sec="notes">Notes <span class="dim">auto-save on blur</span></div>
     <textarea class="notes" id="notes" placeholder="Add a note…">${escapeHtml(asset.notes || '')}</textarea>
     <div class="notes-foot">
       <span id="notes-status">${asset.notes ? 'SAVED' : 'EMPTY'}</span>
       <span>⌘ + ENTER</span>
     </div>
 
-    <div class="section-head">History <span class="dim">— ${asset.review_history.length}</span></div>
+    <div class="section-head" data-sec="history">History <span class="dim">— ${asset.review_history.length}</span></div>
     <ul class="history">
       ${asset.review_history.length === 0 ? '<li><span class="marker"></span><span>No review events yet</span><span class="when"></span></li>' :
         asset.review_history.map(r => {
@@ -2576,6 +2649,13 @@ async function fillDrawer(id) {
       </div>
     </div>
   `;
+
+  // Collapsible sections — fold each section's content under its header so a
+  // draft can be scanned without a long scroll. Boilerplate (metadata, wrapper
+  // params, history) starts collapsed; prompt + refs stay open. Open/closed
+  // state persists per section across drafts. Moving nodes into a wrapper keeps
+  // their IDs, so all the handlers wired below still resolve.
+  setupDrawerSections(body);
 
   // Status pills
   const pillsRoot = $('#drawer-pills');
@@ -3292,6 +3372,12 @@ async function refresh() {
   renderStatusFilters();
   renderSourceFilters();
   syncUrlToFilters();
+  // Keep the non-grid views in sync with filter changes (e.g. media filter).
+  // refresh() only fetches grid data; re-run the active overview so filters
+  // like image/video actually take effect in Segments / Shots.
+  const activeView = document.querySelector('.view-toggle button.active')?.dataset.view;
+  if (activeView === 'scenes') loadScenesView();
+  else if (activeView === 'shots') loadShotsView();
   // If the previously selected asset isn't in the new result set, close
   // the drawer instead of leaving stale content behind.
   if (state.selectedId && !state.items.some(a => a.id === state.selectedId)) {
@@ -3383,13 +3469,15 @@ async function loadScenesView() {
   root.innerHTML = '<div class="scene-empty">Loading segments…</div>';
   let data;
   try {
-    data = await api('/api/scenes');
+    const mt = state.filters.media_type;
+    data = await api('/api/scenes' + (mt ? `?media_type=${encodeURIComponent(mt)}` : ''));
   } catch (e) {
     root.innerHTML = `<div class="scene-empty">Failed to load segments: ${e.message}</div>`;
     return;
   }
   if (!data.scenes || data.scenes.length === 0) {
-    root.innerHTML = '<div class="scene-empty">No segments found. Assign segments to assets to see the overview.</div>';
+    const mt = state.filters.media_type;
+    root.innerHTML = `<div class="scene-empty">No ${mt ? mt + ' ' : ''}segments found. ${mt ? 'Try clearing the media filter.' : 'Assign segments to assets to see the overview.'}</div>`;
     return;
   }
   data.scenes = applySceneOrder(data.scenes);
@@ -3399,8 +3487,16 @@ async function loadScenesView() {
       const cards = assets.map(a => {
         const ring = a.status === 'hero' ? 'hero-ring' : '';
         const shotLabel = a.shot_id || a.filename.slice(0, 14);
+        const isVid = a.media_type === 'video';
+        const vidMark = isVid
+          ? '<span class="sc-video-mark" title="Video"><svg width="8" height="8" viewBox="0 0 10 10"><path d="M3 1.5 L8 5 L3 8.5 Z" fill="currentColor"/></svg></span>'
+          : '';
+        const durMark = isVid && a.duration_sec
+          ? `<span class="sc-duration">${fmtDuration(a.duration_sec)}</span>`
+          : '';
         return `<div class="scene-card" data-id="${a.id}" title="${escapeHtml(a.filename)}">
           <img src="${escapeHtml(a.thumb_url || '')}" alt="" class="${ring}" loading="lazy" onerror="this.style.background='var(--surface-soft)'">
+          ${vidMark}${durMark}
           <div class="sc-label">${escapeHtml(shotLabel)}</div>
         </div>`;
       }).join('');
