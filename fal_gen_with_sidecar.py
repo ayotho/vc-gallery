@@ -46,7 +46,9 @@ from jsonl_append import append_jsonl  # noqa: E402
 
 FAL_KLING_O3_R2V = "fal-ai/kling-video/o3/pro/reference-to-video"
 # fal rejects reference images larger than 10 MB ("file_too_large"). Studio 4K
-# stills are ~30 MB, so over-limit local refs are auto-downscaled before upload.
+# stills are ~30 MB uncompressed PNG, so over-limit refs are re-encoded to a
+# high-quality JPEG — full resolution kept (they fit in a few MB). See
+# _shrink_image_if_needed; resolution is only reduced as a last resort.
 _FAL_MAX_REF_BYTES = 10 * 1024 * 1024
 # Safety cap on count so a fat-finger (e.g. count=99) can't trigger runaway spend.
 _FAL_MAX_COUNT = 12
@@ -100,26 +102,39 @@ def _load_fal_key_fallback() -> None:
 
 def _shrink_image_if_needed(path: Path) -> Path:
     """Return the original path if it is within fal's 10 MB reference limit,
-    otherwise a downscaled JPEG copy under the limit (macOS `sips`). If shrinking
-    is unavailable the original is returned and fal will reject it loudly."""
+    otherwise the HIGHEST-QUALITY copy that fits — preserving resolution wherever
+    possible (a >10 MB file is almost always an uncompressed PNG that becomes a
+    few MB as a high-quality JPEG at full res, so we lose ~nothing). Resolution is
+    only reduced as a last resort. macOS `sips`; original returned if unavailable."""
     try:
         if path.stat().st_size <= _FAL_MAX_REF_BYTES:
             return path
     except OSError:
         return path
+    target = int(_FAL_MAX_REF_BYTES * 0.95)  # margin under the hard 10 MB cap
     tmp_dir = Path(tempfile.mkdtemp(prefix="fal_ref_"))
-    for max_dim, quality in ((2048, 85), (1600, 80), (1280, 75)):
-        out = tmp_dir / f"{path.stem}_{max_dim}.jpg"
+
+    def _encode(args: list[str], tag: str) -> Path | None:
+        out = tmp_dir / f"{path.stem}_{tag}.jpg"
         try:
-            subprocess.run(
-                ["sips", "-s", "format", "jpeg", "-Z", str(max_dim),
-                 "-s", "formatOptions", str(quality), str(path), "--out", str(out)],
-                check=True, capture_output=True,
-            )
+            subprocess.run(["sips", "-s", "format", "jpeg", *args, str(path), "--out", str(out)],
+                           check=True, capture_output=True)
         except (OSError, subprocess.CalledProcessError):
-            break
-        if out.exists() and out.stat().st_size <= _FAL_MAX_REF_BYTES:
-            return out
+            return None
+        return out if (out.exists() and out.stat().st_size <= target) else None
+
+    # Pass 1 — keep FULL resolution, step JPEG quality down. This handles the
+    # common case (huge PNG → small JPEG) with no resolution loss at all.
+    for q in (98, 95, 92, 88, 84, 80):
+        got = _encode(["-s", "formatOptions", str(q)], f"q{q}")
+        if got:
+            return got
+    # Pass 2 — full-res still over budget (rare): reduce the longest edge, keep
+    # quality high. Generous caps so we only shrink as much as strictly needed.
+    for max_dim, q in ((4096, 90), (3072, 90), (2560, 88), (2048, 85)):
+        got = _encode(["-Z", str(max_dim), "-s", "formatOptions", str(q)], str(max_dim))
+        if got:
+            return got
     return path
 
 

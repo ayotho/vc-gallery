@@ -1621,7 +1621,8 @@ const MODEL_SCHEMAS = {
     kind: 'video',
     // Reference URLs only: the draft's 1–4 reference images become image_urls,
     // referenced in the prompt as @Image1…@Image4. No start frame required.
-    // Refs over 10 MB are auto-downscaled by the wrapper before upload.
+    // Refs over 10 MB (fal's cap) are re-encoded to high-quality JPEG by the wrapper,
+    // keeping full resolution — no quality loss; resolution only drops as a last resort.
     params: {
       duration: { type: 'number', min: 3, max: 15, default: 8, group: 'timing', help: 'Seconds' },
       aspect_ratio: { type: 'select', options: ['16:9','9:16','1:1'], default: '16:9', group: 'output' },
@@ -1634,7 +1635,7 @@ const MODEL_SCHEMAS = {
     label: 'fal · Kling O3 4K — reference to video',
     kind: 'video',
     // Same as the standard fal Kling O3 R2V but native 4K output. Refs → image_urls
-    // (1–4, @Image1…@Image4), no start frame; refs >10 MB auto-downscaled.
+    // (1–4, @Image1…@Image4), no start frame; refs >10 MB re-encoded to high-quality JPEG (full res kept).
     // COST: ~$0.42/sec (≈$3.36 / 8s clip) — ~3–4× the standard tier. Hero shots, not batches.
     params: {
       duration: { type: 'number', min: 3, max: 15, default: 8, group: 'timing', help: 'Seconds' },
