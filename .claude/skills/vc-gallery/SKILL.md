@@ -137,6 +137,26 @@ Cards with the same `shot_id` visually stack in the gallery grid. This is automa
 
 ---
 
+## Review Board (Kanban view)
+
+A 4th view — the **Board** tab, next to Grid / Segments / Shots — that lays assets out as a Kanban: one column per review status, in review-flow order **Review → Revise → Accepted → Hero → Rejected** (Alternate/Legacy in a collapsed "More"; Draft/Firing excluded). The point: **changing a status MOVES the card to another column — it never disappears**, so the whole review state stays on one screen with live per-column counts. It is purely a new RENDER of existing data — no new endpoints, no schema change, frontend-only (`visual_chef_gallery.html`).
+
+**For agents (no new API — the board reuses the existing write path):**
+- **Move / triage a card:** `PATCH /api/assets/{id} {status}` — the single write path (logs a review row + runs the hero-demotion cascade server-side). NEVER `POST /reviews` from board context.
+- **Bulk move:** `POST /api/assets/bulk-status {asset_ids, status}`.
+- **Revise comment:** `PATCH /api/assets/{id} {notes}` (merges into `user_notes`; read back as `asset.notes`).
+- **Revise queue (the "revise all these" handoff):** `GET /api/assets?status=revise` → each row's `shot_id` + `notes` is the worklist. The board's "⧉ Copy queue" button emits the same `shot_id — note` lines for a manual handoff — manual and agent read the identical field.
+- **Board fetch (what the view shows):** `GET /api/assets?limit=2000` with the status param omitted (so every column populates) + any other active sidebar filters passed through.
+
+**Manual (director):**
+- **Drag** a card between columns to change status. **Shift/Cmd-click** or **marquee-drag across empty background** to multi-select, then bulk Accept/Hero/Revise/Reject or ⊞ Compare.
+- **Hotkeys** on the focused card: `a` accept · `h` hero · `v` revise (autofocuses the inline comment) · `r` reject · arrows move focus.
+- **▶ Play all** on a multi-version shot opens the existing side-by-side compare (solo-audio). Same `shot_id` cards cluster with a shot chip; siblings can sit across different columns and all stay visible.
+
+**Reversibility:** additive — one `data-view="board"` button + `#board-root` + `renderKanban()` + a guarded `patchAsset` board branch + a shared `groupByShot` helper. Removing them restores the prior app; no schema/API change.
+
+---
+
 ## Draft Lifecycle (how agents fire generations)
 
 Drafts are the staging area for new generations. The flow:
@@ -212,6 +232,59 @@ Fire states: `running`, `completed`, `failed`
 
 ---
 
+## Engines — Higgsfield (default) + fal (additional option)
+
+The fire path picks the engine **automatically from the model id**. Nothing about
+the Higgsfield flow changes — fal is an extra option, not a replacement.
+
+| Model id | Engine | Wrapper |
+|---|---|---|
+| `fal-ai/…` (e.g. `fal-ai/kling-video/o3/pro/reference-to-video`) | **fal** | `fal_gen_with_sidecar.py` |
+| everything else (`kling3_0`, `seedance_*`, `gpt_image_2`, …) | **higgsfield** | `hf_gen_with_sidecar.py` |
+
+Routing lives in `_engine_for_payload()`: explicit `engine: "fal"|"higgsfield"` wins,
+else any `model` starting with `fal-ai/` → fal, else higgsfield. Both engines share
+the SAME draft → fire → review lifecycle, the SAME renaming/stacking, and write to
+the SAME provider-agnostic `jobs` table (`job_provider`, `provider_job_id`, `source_url`).
+
+### fal Kling O3 Pro — reference-to-video
+
+Model: `fal-ai/kling-video/o3/pro/reference-to-video`. **Reference-URL driven** — it
+does NOT need a start frame.
+
+- **Refs → `image_urls`** (1–4 images). They are *references*, referenced in the prompt
+  as `@Image1`…`@Image4`. They are NOT auto-assigned to start/end frame. Put the refs in
+  the draft's `image` (or `refs`/`image_urls`) array; the wrapper requires ≥1.
+- **`count`** → quantity. `count: 3` fires 3 generations, named `…_1/_2/_3`; the first
+  mutates the draft row, the rest become new rows under the same shot_id/scene.
+- **`generate_audio`** `"true"|"false"` (Kling O3 has native audio; audio-on costs more).
+- **`duration`** 3–15s · **`aspect_ratio`** 16:9/9:16/1:1 · **`shot_type`** customize/intelligent.
+- Refs over **10 MB are re-encoded to high-quality JPEG, full resolution kept** (sips) — fal rejects >10 MB but a 30 MB PNG → ~2–3 MB JPEG at full res; resolution only drops as a last resort.
+- Auth: `FAL_KEY` in the server's env (falls back to reading `~/.claude/env.sh`).
+- Cost (Kling O3 on fal): ≈ $0.112/s audio-off, ≈ $0.14/s audio-on (≈ $1.12 per 8s audio-on clip).
+
+**Stage + fire (identical to Higgsfield, just a fal model id):**
+```
+POST /api/draft
+body: {
+  filename: "SH450_klingo3_v1.mp4", client: "BTW_Documentary", project: "EP9",
+  shot_id: "SH450", scene: "act2", model: "fal-ai/kling-video/o3/pro/reference-to-video",
+  workflow: "i2v",
+  payload: {
+    model: "fal-ai/kling-video/o3/pro/reference-to-video",
+    prompt: "@Image1 walks through the corridor, slow dolly, cinematic",
+    image: ["/abs/ref1.png", "/abs/ref2.png"],   // 1–4 refs → @Image1…@Image4
+    duration: 5, aspect_ratio: "16:9", generate_audio: "true", count: 1
+  }
+}
+POST /api/draft/{id}/fire    // human clicks Fire in the drawer, or an agent POSTs this
+```
+The UI dropdown lists it as **"fal · Kling O3 Pro — reference to video"** (in `MODEL_SCHEMAS`).
+
+> **Full fal engine detail → `/vc-fal`** — wrapper contract, ref-only/count/downscale behavior, the standard + 4K models, and the `search→gen→paste` workflow for adding new fal models with no code changes. Broad fal SDK + model-discovery APIs → `/fal`. (This mirrors how `/vc-higgsfield` complements `/vc-gallery`.)
+
+---
+
 ## External fire registration (agent-spawned wrappers, #28)
 
 When an agent fires the wrapper directly (not through the draft UI), the wrapper auto-notifies the server via `--notify-server` (defaults to `$VC_CANVAS_URL` or `http://127.0.0.1:8770`).
@@ -274,7 +347,38 @@ GET /sidecar/<filename>     -> raw sidecar markdown
 
 To actually see a ref image, use the Read tool on the raw path (available in `refs_resolved[].raw`).
 
+**Source discipline:** video draft refs should come from VC Gallery assets, not
+segment-card screenshots. Segment cards are briefing/spec context. Do not pass
+`clients/.../segment_cards/frames/...` paths into `payload.image` unless the
+director explicitly promotes that still into VC Gallery as a real generation
+reference. If a shot has no VC Gallery ref, stage it as blocked/needs-ref rather
+than silently using a segment-card frame.
+
+**Prompt ref token split by engine:**
+- fal models that support reference tags, including Kling O3
+  `fal-ai/kling-video/o3/pro/reference-to-video`, may use `@Image1`,
+  `@Image2`, etc. in prompt text.
+- Higgsfield/Seedance wrapper prompts must not contain `@Image1` /
+  `@image_1` tokens. The Higgsfield CLI treats `@...` as a read-from-file sigil
+  and can fail before submit. For those drafts, pass refs in `payload.image` but
+  refer to them in prompt text as `Reference 1`, `Reference 2`, etc.
+- Higgsfield `seedance_2_0` rejected `sound` as an unknown param on 2026-06-03.
+  Until `higgsfield model get seedance_2_0` confirms otherwise, omit `sound`
+  from Seedance payloads and describe diegetic audio/SFX in the prompt text.
+
 ---
+
+## Changelog (2026-06-06)
+
+- **Board updates in place (no more shake on new clips)** — background polls (the new-clip scan + fire-completion) used to rebuild the whole board via `innerHTML`, which on the Review Board reset a playing preview/drawer video, kicked the cursor out of a revise note mid-type, and shook the layout whenever a clip landed. A background poll now **reconciles the board in place** (`reconcileKanban()`): cards are added/relocated/removed on the live DOM (a node move preserves a playing `<video>`), the card under active edit is never touched, the open drawer is no longer closed out (the close-drawer check now counts `boardItems`), and a marquee selection survives the poll. The full re-sort/re-cluster rebuild only runs on user-driven refreshes (filter / view change). Frontend-only, fully reversible. **Agent note:** nothing changes for agents — status/notes still go through `PATCH /api/assets/{id}`; the board just no longer flickers while you fire new generations during a review.
+
+## Changelog (2026-06-05)
+
+- **Review Board (Kanban view)** — new 4th view (the dormant `board` tab revived). Columns = review statuses; a status change MOVES a card between columns instead of removing it (fixes "card vanishes on status change"). Drag / click / hotkey (`a/h/v/r`) + marquee multi-select all funnel through `PATCH /api/assets/{id}` (never `/reviews`). Inline Revise comment per card; "⧉ Copy queue" exports the revise worklist (matches `GET /api/assets?status=revise`). Reuses stacking, compare, filters, and the multi-select engine. Frontend-only, fully reversible. See **Review Board (Kanban view)** section above.
+
+## Changelog (2026-06-02)
+
+- **Second engine: fal** — `fal-ai/…` models route to `fal_gen_with_sidecar.py`; everything else stays on Higgsfield. Same draft→fire→review lifecycle, same stacking, provider-agnostic `jobs` table. First model: `fal-ai/kling-video/o3/pro/reference-to-video` (reference-URL driven, no start frame; `count` quantity; refs >10 MB re-encoded full-res JPEG; `FAL_KEY` auth). See **Engines** section above.
 
 ## Changelog (2026-05-18)
 
