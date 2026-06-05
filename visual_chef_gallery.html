@@ -3951,7 +3951,12 @@ function buildReviseNote(asset) {
   copyBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     const note = input.value.trim();
-    const line = `${asset.shot_id || ('#' + asset.id)}${note ? ' — ' + note : ''}`;
+    // Lead with the asset id (unambiguous — never confused with the shot id),
+    // then shot id, then status, then the note.
+    const parts = [`#${asset.id}`];
+    if (asset.shot_id) parts.push(asset.shot_id);
+    parts.push(asset.status);
+    const line = parts.join(' · ') + (note ? ` — ${note}` : '');
     try {
       await navigator.clipboard.writeText(line);
       tick.classList.add('show');
