@@ -336,6 +336,110 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .multi-select-bar .ms-clear:hover { opacity: 0.92; }
 .multi-select-bar .ms-act.compare { background: var(--surface-soft); border-color: var(--accent-magenta, #d97757); color: var(--accent-magenta, #d97757); font-weight: 600; }
 
+/* ── Review Board (Kanban) ─────────────────────────────────────────────
+   Additive view. Horizontal lanes of status columns; each lane scrolls
+   independently with a sticky header (swatch + label + live count). Cards
+   reuse the existing .card factory verbatim, just laid out narrower. */
+#board-root { position: relative; }
+.board-lanes {
+  display: flex;
+  gap: var(--s-md);
+  align-items: flex-start;
+  /* Fill the canvas height below the head so columns scroll independently.
+     calc accounts for topbar + canvas padding + head + a little breathing room. */
+  height: calc(100vh - var(--topbar-h) - 220px);
+  min-height: 420px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: var(--s-sm);
+}
+.board-banner {
+  margin: 0 0 var(--s-md); padding: 8px 14px; border-radius: var(--r-md);
+  background: var(--block-cream); border: 1px solid var(--hairline);
+  font-size: 12.5px; color: #6f5b2e; font-weight: 500;
+}
+.board-column {
+  flex: 0 0 300px; width: 300px;
+  display: flex; flex-direction: column;
+  background: var(--surface-soft);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--r-md);
+  max-height: 100%;
+  transition: background .12s ease, box-shadow .12s ease;
+}
+.board-column.drop-active {
+  background: #eef3df;
+  box-shadow: inset 0 0 0 2px var(--block-lime);
+}
+.board-col-head {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--hairline);
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  font-size: 13px; font-weight: 560; color: var(--ink);
+}
+.board-col-swatch { width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+.board-col-label { letter-spacing: -0.1px; }
+.board-col-count {
+  margin-left: auto; font-size: 11.5px; font-weight: 600; color: #6f6c64;
+  background: var(--canvas); border: 1px solid var(--hairline);
+  border-radius: var(--r-pill); padding: 1px 9px; min-width: 22px; text-align: center;
+}
+.board-col-count.attention { background: var(--block-coral); color: #fff; border-color: transparent; }
+.board-col-action {
+  font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: var(--r-pill);
+  background: var(--canvas); border: 1px solid var(--hairline); color: var(--ink); cursor: pointer;
+}
+.board-col-action:hover { border-color: var(--ink); }
+.board-col-list {
+  flex: 1 1 auto; overflow-y: auto; overflow-x: hidden;
+  padding: 10px; display: flex; flex-direction: column; gap: 10px;
+  min-height: 60px;
+}
+/* Board cards: the .card factory output, narrowed for lanes */
+.board-col-list .card { width: 100%; }
+.board-col-list .card.board-focus { box-shadow: 0 0 0 2px var(--accent-magenta, #d97757); border-radius: var(--r-md); }
+.board-col-empty { color: #9b988f; font-size: 12px; text-align: center; padding: 18px 6px; font-style: italic; }
+/* Shot cluster — siblings sit adjacent under a thin shot chip */
+.board-shot-cluster { display: flex; flex-direction: column; gap: 8px; }
+.board-shot-chip {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.2px; text-transform: uppercase;
+  color: #6f6c64; padding: 0 2px;
+}
+.board-shot-chip .bsc-play {
+  margin-left: auto; font-size: 10px; font-weight: 500; text-transform: none; letter-spacing: 0;
+  padding: 1px 7px; border-radius: var(--r-pill); border: 1px solid var(--hairline);
+  background: var(--canvas); color: var(--ink); cursor: pointer;
+}
+.board-shot-chip .bsc-play:hover { border-color: var(--ink); }
+/* Inline revise comment on a Revise-column card */
+.board-revise-note {
+  margin-top: 6px; display: flex; align-items: center; gap: 6px;
+}
+.board-revise-note input {
+  flex: 1 1 auto; min-width: 0; font-size: 12px; padding: 5px 8px;
+  border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  background: var(--canvas); color: var(--ink); font-family: var(--sans);
+}
+.board-revise-note input:focus { outline: none; border-color: var(--accent-magenta, #d97757); }
+.board-revise-note .brn-tick { font-size: 11px; color: var(--success); opacity: 0; transition: opacity .15s ease; }
+.board-revise-note .brn-tick.show { opacity: 1; }
+/* Marquee rubber-band selection box */
+.marquee-box {
+  position: fixed; z-index: 50; pointer-events: none;
+  border: 1px solid var(--accent-magenta, #d97757);
+  background: rgba(255, 61, 138, 0.10);
+  border-radius: 2px;
+}
+.board-hotkey-legend { font-size: 11.5px; color: #6f6c64; margin: 0 0 10px; }
+.board-hotkey-legend kbd {
+  background: var(--surface-soft); border: 1px solid var(--hairline); border-radius: 4px;
+  padding: 1px 5px; font-family: var(--mono); font-size: 10.5px; color: var(--ink);
+}
+
 /* Latest Only toggle */
 .latest-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 480; color: #6f6c64; cursor: pointer; padding: 0 8px; user-select: none; }
 .latest-toggle input { accent-color: var(--primary); cursor: pointer; }
@@ -1001,9 +1105,8 @@ select.mp-input { padding-right: 22px; }
   .drawer.hidden { display: none; }
   .canvas { padding-left: var(--s-lg); padding-right: var(--s-lg); }
   .canvas-tools { gap: 4px; }
-  /* Below 920px, the multi-button view toggle wastes real estate. Hide
-     Board / List labels (they're stubs anyway); keep Grid as a single pill. */
-  .view-toggle button[data-view="board"],
+  /* Below 920px, the multi-button view toggle wastes real estate. Hide the
+     List label (still a stub); the Board view is live, so it stays visible. */
   .view-toggle button[data-view="list"] { display: none; }
   /* When drawer is open at narrow widths, show a subtle backdrop */
   body:not(.drawer-hidden)::after {
@@ -1233,6 +1336,10 @@ select.mp-input { padding-right: 22px; }
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="0.5" y="0.5" width="3.5" height="11" rx="1" stroke="currentColor"/><rect x="5.5" y="0.5" width="3.5" height="7" rx="1" stroke="currentColor"/><rect x="5.5" y="9" width="3.5" height="2.5" rx="1" stroke="currentColor"/></svg>
           Shots
         </button>
+        <button data-view="board" title="Review board — Kanban by status. Drag cards between columns to change status.">
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="0.5" y="0.5" width="3" height="11" rx="1" stroke="currentColor"/><rect x="4.5" y="0.5" width="3" height="8" rx="1" stroke="currentColor"/><rect x="8.5" y="0.5" width="3" height="5" rx="1" stroke="currentColor"/></svg>
+          Board
+        </button>
       </div>
       <label class="latest-toggle" title="Group versions by shot — shows a cover card with a count badge">
         <input type="checkbox" id="chk-latest-only" checked> Stack versions
@@ -1423,6 +1530,9 @@ select.mp-input { padding-right: 22px; }
 
       <!-- Shots view — groups cards by shot_id, shows version counts -->
       <div id="shots-root" style="display:none"></div>
+
+      <!-- Review Board (Kanban) — status columns, drag to change status -->
+      <div id="board-root" style="display:none"></div>
     </main>
 
     <!-- Compare overlay — shows 2-4 selected assets side by side for quick A/B judging -->
@@ -1678,6 +1788,13 @@ const STATUSES = [
   { key: 'legacy',    label: 'Legacy',    swatch: 'var(--surface-soft)' },
 ];
 
+// Review Board columns, left→right in review-flow order. A curated subset of
+// STATUSES — NOT all 9. draft/firing are excluded (pre-generation lifecycle,
+// no media to review, dangerous to drop into). alternate/legacy live in a
+// collapsed "More" lane (low-traffic). Reorder/add/remove = edit these arrays.
+const BOARD_COLUMNS = ['review', 'revise', 'accepted', 'hero', 'rejected'];
+const BOARD_MORE_COLUMNS = ['alternate', 'legacy'];
+
 const SOURCE_TYPES = [
   { key: '',             label: 'All' },
   { key: 'generated',    label: 'Generated' },
@@ -1711,6 +1828,11 @@ const state = {
   multiSelection: new Set(),  // asset_ids
   lastMultiAnchor: null,       // for shift-range expansion
   lastChangeAt: 0,    // server's last_change_at watermark — drives auto-refresh
+  // Review Board (Kanban) — board-local state, kept separate from the grid's
+  // state.items so the grid's paging/scroll is never disturbed.
+  boardItems: [],          // full board-scoped fetch (all statuses, filters applied)
+  boardFocusId: null,      // keyboard-focused card on the board
+  boardMoreOpen: false,    // whether the collapsed "More" (alternate/legacy) lane is shown
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -1981,15 +2103,24 @@ function cardEl(asset, idx) {
     </div>
   `;
 
-  // Drag-to-inherit: drag card A onto card B → A inherits B's shot_id + scene
+  // Drag-to-inherit: drag card A onto card B → A inherits B's shot_id + scene.
+  // On the BOARD this card-level inherit must NOT fire — the board column owns
+  // the drop (it changes status). cardEl's inherit handlers are therefore made
+  // inert on the board so a drop onto a card = exactly ONE write (the column's
+  // status PATCH), zero inherit.
+  const onBoardView = () => document.querySelector('.view-toggle button.active')?.dataset.view === 'board';
   a.draggable = true;
   a.addEventListener('dragstart', (e) => {
     e.dataTransfer.setData('text/plain', String(asset.id));
-    e.dataTransfer.effectAllowed = 'copy';
+    // Board drags advertise 'move' so the column's dropEffect='move' reconciles
+    // (copy-source + move-target → "none" → drop may never fire on strict
+    // browsers). Grid keeps 'copy' for the inherit gesture.
+    e.dataTransfer.effectAllowed = onBoardView() ? 'move' : 'copy';
     a.classList.add('dragging');
   });
   a.addEventListener('dragend', () => a.classList.remove('dragging'));
   a.addEventListener('dragover', (e) => {
+    if (onBoardView()) return;  // let the board column's dragover handle it
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     a.classList.add('drop-target');
@@ -1998,6 +2129,9 @@ function cardEl(asset, idx) {
   a.addEventListener('drop', async (e) => {
     e.preventDefault();
     a.classList.remove('drop-target');
+    // On the board, skip the inherit POST and let the drop BUBBLE to the
+    // column's drop listener (which owns the status move). No stopPropagation.
+    if (onBoardView()) return;
     const draggedId = Number(e.dataTransfer.getData('text/plain'));
     if (!draggedId || draggedId === asset.id) return;
     if (!asset.shot_id && !asset.scene) {
@@ -2067,6 +2201,60 @@ function cardEl(asset, idx) {
   return a;
 }
 
+// Shared shot-grouping primitive — factored out of renderGrid (was inline at
+// the old lines 2081–2123) so BOTH the grid (stacked covers) and the board
+// (individual sibling cards, adjacency by shot) use ONE source of truth for
+// grouping. Behavior for the grid is byte-identical to the prior inline block:
+// same bucketing, same STATUS_RANK cover pick, same newest-first sort.
+//   Returns:
+//     grouped     { shot_id: [members…] }   — only shots with a shot_id
+//     ungrouped   [members…]                — orphans (no shot_id)
+//     order       [shot_id…]                — first-seen order of shots
+//     stackedItems[cover|orphan…]           — grid's stacked render list
+//                                              (covers carry ._stack; sorted)
+function groupByShot(items) {
+  const grouped = {};
+  const ungrouped = [];
+  const order = []; // preserve first-seen order of shot_ids
+  items.forEach(item => {
+    const sid = item.shot_id;
+    if (sid) {
+      if (!grouped[sid]) { grouped[sid] = []; order.push(sid); }
+      grouped[sid].push(item);
+    } else {
+      ungrouped.push(item);
+    }
+  });
+  const STATUS_RANK = {hero: 0, accepted: 1, alternate: 2, review: 3, revise: 4, rejected: 5, firing: 6, draft: 7};
+  const stackedItems = [];
+  order.forEach(sid => {
+    const members = grouped[sid];
+    // Cover: hero > accepted > latest
+    const cover = members.reduce((best, m) => {
+      const bRank = STATUS_RANK[best.status] ?? 9;
+      const mRank = STATUS_RANK[m.status] ?? 9;
+      if (mRank < bRank) return m;
+      if (mRank === bRank && (m.first_seen_at || 0) > (best.first_seen_at || 0)) return m;
+      return best;
+    });
+    cover._stack = { count: members.length, members: members, shot_id: sid };
+    cover._stack.needsAttention = members.some(m => m.status === 'review' || m.status === 'revise');
+    stackedItems.push(cover);
+  });
+  ungrouped.forEach(item => stackedItems.push(item));
+  // #48: Sort stacks by newest member so new variants pull the stack to top
+  stackedItems.sort((a, b) => {
+    const aTime = a._stack
+      ? Math.max(...a._stack.members.map(m => m.first_seen_at || 0))
+      : (a.first_seen_at || 0);
+    const bTime = b._stack
+      ? Math.max(...b._stack.members.map(m => m.first_seen_at || 0))
+      : (b.first_seen_at || 0);
+    return bTime - aTime;  // DESC — newest first
+  });
+  return { grouped, ungrouped, order, stackedItems };
+}
+
 function renderGrid(append = false) {
   const root = $('#grid-root');
   if (!append) root.innerHTML = '';
@@ -2079,46 +2267,7 @@ function renderGrid(append = false) {
   // Appended items may belong to an existing shot_id group, so the whole list
   // must be re-grouped and the grid re-rendered from scratch.
   if (state.stackVersions) {
-    const grouped = {};
-    const ungrouped = [];
-    const order = []; // preserve first-seen order of shot_ids
-    state.items.forEach(item => {
-      const sid = item.shot_id;
-      if (sid) {
-        if (!grouped[sid]) { grouped[sid] = []; order.push(sid); }
-        grouped[sid].push(item);
-      } else {
-        ungrouped.push(item);
-      }
-    });
-    const STATUS_RANK = {hero: 0, accepted: 1, alternate: 2, review: 3, revise: 4, rejected: 5, firing: 6, draft: 7};
-    const stackedItems = [];
-    order.forEach(sid => {
-      const members = grouped[sid];
-      // Cover: hero > accepted > latest
-      const cover = members.reduce((best, m) => {
-        const bRank = STATUS_RANK[best.status] ?? 9;
-        const mRank = STATUS_RANK[m.status] ?? 9;
-        if (mRank < bRank) return m;
-        if (mRank === bRank && (m.first_seen_at || 0) > (best.first_seen_at || 0)) return m;
-        return best;
-      });
-      cover._stack = { count: members.length, members: members, shot_id: sid };
-      cover._stack.needsAttention = members.some(m => m.status === 'review' || m.status === 'revise');
-      stackedItems.push(cover);
-    });
-    ungrouped.forEach(item => stackedItems.push(item));
-    state._renderItems = stackedItems;
-    // #48: Sort stacks by newest member so new variants pull the stack to top
-    state._renderItems.sort((a, b) => {
-      const aTime = a._stack
-        ? Math.max(...a._stack.members.map(m => m.first_seen_at || 0))
-        : (a.first_seen_at || 0);
-      const bTime = b._stack
-        ? Math.max(...b._stack.members.map(m => m.first_seen_at || 0))
-        : (b.first_seen_at || 0);
-      return bTime - aTime;  // DESC — newest first
-    });
+    state._renderItems = groupByShot(state.items).stackedItems;
     // Stacking must re-render the full grid (groups may have changed)
     append = false;
   } else {
@@ -3270,21 +3419,66 @@ async function patchAsset(id, payload) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    // Update local item
-    const idx = state.items.findIndex(a => a.id === id);
-    if (idx >= 0) {
-      state.items[idx] = { ...state.items[idx], ...updated };
-      const statusFilter = state.filters.status;
-      const shouldRemove = statusFilter && updated.status && updated.status !== statusFilter;
-      const old = $(`.card[data-id="${id}"]`);
-      if (shouldRemove) {
-        if (old) old.remove();
-        state.items.splice(idx, 1);
-        state.total = Math.max(0, (state.total || 0) - 1);
-        renderCanvasHead();
-      } else if (old) {
-        const fresh = cardEl(state.items[idx], idx);
-        old.replaceWith(fresh);
+    // Keep the board-local item set in sync (separate from the grid's
+    // state.items page) so a re-partition / count reflects the new status.
+    const bIdx = state.boardItems.findIndex(a => a.id === id);
+    if (bIdx >= 0) state.boardItems[bIdx] = { ...state.boardItems[bIdx], ...updated };
+
+    const onBoard = document.querySelector('.view-toggle button.active')?.dataset.view === 'board';
+    if (onBoard) {
+      // BOARD branch — relocate the card to its new-status column instead of
+      // the grid's remove/replace-in-place. Status changes are a column MOVE.
+      // (The grid's unscoped `.card[data-id]` excision must NOT run here — it
+      // would grab the board card and replace it with a grid-style card.)
+      // Also keep state.items merged so switching back to grid is consistent.
+      const gIdx = state.items.findIndex(a => a.id === id);
+      if (gIdx >= 0) state.items[gIdx] = { ...state.items[gIdx], ...updated };
+      const card = $(`#board-root .card[data-id="${id}"]`);
+      if (card) {
+        // Only relocate on an actual status change. A notes-only PATCH (no
+        // status key, or unchanged status) does NEITHER relocate NOR rebuild —
+        // otherwise typing a revise note would rebuild the input mid-keystroke
+        // and kill focus.
+        //
+        // This branch fires for the DIRECT entry points that bypass
+        // boardMoveCard: the on-card quick ★A/★R/★V/★H buttons, the
+        // Compare-overlay status buttons, and agent PATCHes while the board is
+        // open. (On the drag/hotkey path, boardMoveCard already set
+        // card.dataset.status optimistically, so the condition below is false
+        // here — no double relocate / re-render.)
+        if (updated.status && updated.status !== card.dataset.status) {
+          moveCardToColumn(card, updated.status);
+          if (updated.status === 'hero') {
+            // Hero cascade: server demotes the prior hero of this shot. Re-fetch
+            // + re-partition so the demoted card relocates out of Hero. Covers
+            // ALL hero entry points (quick ★H, Compare ★Hero, agent PATCH).
+            renderKanban();
+          } else {
+            // Rebuild the card in place so the inline Revise note appears (into
+            // Revise) or disappears (out of Revise) correctly.
+            refreshBoardCard(id, updated);
+          }
+        }
+        recomputeBoardCounts();
+      }
+    } else {
+      // GRID branch — UNCHANGED from before the board was added.
+      // Update local item
+      const idx = state.items.findIndex(a => a.id === id);
+      if (idx >= 0) {
+        state.items[idx] = { ...state.items[idx], ...updated };
+        const statusFilter = state.filters.status;
+        const shouldRemove = statusFilter && updated.status && updated.status !== statusFilter;
+        const old = $(`.card[data-id="${id}"]`);
+        if (shouldRemove) {
+          if (old) old.remove();
+          state.items.splice(idx, 1);
+          state.total = Math.max(0, (state.total || 0) - 1);
+          renderCanvasHead();
+        } else if (old) {
+          const fresh = cardEl(state.items[idx], idx);
+          old.replaceWith(fresh);
+        }
       }
     }
     if (id === state.selectedId) {
@@ -3379,6 +3573,7 @@ async function refresh() {
   const activeView = document.querySelector('.view-toggle button.active')?.dataset.view;
   if (activeView === 'scenes') loadScenesView();
   else if (activeView === 'shots') loadShotsView();
+  else if (activeView === 'board') renderKanban();
   // If the previously selected asset isn't in the new result set, close
   // the drawer instead of leaving stale content behind.
   if (state.selectedId && !state.items.some(a => a.id === state.selectedId)) {
@@ -3610,6 +3805,537 @@ async function loadScenesView() {
       loadScenesView();
     });
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  REVIEW BOARD (Kanban)  — additive 4th view. Status columns; drag/hotkey a
+//  card between columns to change its status. Reuses cardEl, patchAsset,
+//  groupByShot, openCompare, the multi-select engine, and the existing APIs.
+//  Build is HTML-only: PATCH /api/assets/{id} is the single write path.
+// ════════════════════════════════════════════════════════════════════════
+
+// Build the board fetch query: blank the status param (the board owns column
+// partitioning — every column must populate regardless of the sidebar status
+// filter), pass through every OTHER active filter, cap at the server's 2000.
+function boardQuery() {
+  // buildQuery() serializes state.filters incl. status; strip status + force
+  // a board-scoped limit/offset. Keep all other filters (scene/model/q/…).
+  const params = new URLSearchParams(buildQuery());
+  params.delete('status');
+  params.set('limit', '2000');
+  params.set('offset', '0');
+  return params.toString();
+}
+
+function boardColumnEl(key) {
+  return $(`#board-root .board-column[data-status="${key}"]`);
+}
+
+// Active board columns = primary subset, plus More (alternate/legacy) when open.
+function activeBoardColumns() {
+  return state.boardMoreOpen ? BOARD_COLUMNS.concat(BOARD_MORE_COLUMNS) : BOARD_COLUMNS.slice();
+}
+
+// Live per-column count = number of card nodes currently in that lane's list.
+// Instant + local; reconciled against state.facets.status after a PATCH.
+// CAVEAT: while the >2000 truncation banner is showing, this badge reflects the
+// VISIBLE card count, not the DB total for that status (the board only holds the
+// first 2000 rows). BTW folders are well under 2000, so this doesn't bite today.
+function recomputeBoardCounts() {
+  activeBoardColumns().forEach(key => {
+    const col = boardColumnEl(key);
+    if (!col) return;
+    const list = col.querySelector('.board-col-list');
+    const n = list ? list.querySelectorAll('.card').length : 0;
+    const badge = col.querySelector('.board-col-count');
+    if (badge) {
+      badge.textContent = n;
+      // tint when a column is unusually full (informational only — never blocks)
+      badge.classList.toggle('attention', (key === 'review' || key === 'revise') && n >= 12);
+    }
+  });
+}
+
+// Move a single card DOM node into the column matching `newStatus`, preserving
+// shot-cluster adjacency. Returns true if the card landed on a visible column,
+// false if newStatus has no board column (card removed from board — still in DB).
+function moveCardToColumn(card, newStatus) {
+  const cols = activeBoardColumns();
+  const targetCol = cols.includes(newStatus) ? boardColumnEl(newStatus) : null;
+  if (!targetCol) {
+    // Status is off-board (e.g. draft/firing) — the card leaves the board only.
+    card.remove();
+    return false;
+  }
+  const list = targetCol.querySelector('.board-col-list');
+  if (!list) return false;
+  // Remove any "empty" placeholder before inserting.
+  const empty = list.querySelector('.board-col-empty');
+  if (empty) empty.remove();
+  card.dataset.status = newStatus;
+  // Try to keep siblings of the same shot together: insert next to an existing
+  // sibling card in the target column if one exists; else append.
+  const sid = card.dataset.shotId || '';
+  let placed = false;
+  if (sid) {
+    const sibling = list.querySelector(`.card[data-shot-id="${CSS.escape(sid)}"]`);
+    if (sibling) { sibling.after(card); placed = true; }
+  }
+  if (!placed) list.appendChild(card);
+  return true;
+}
+
+// Build one board card from an asset. Wraps cardEl() (verbatim visual parity)
+// and adds: a data-shot-id hook for clustering, the board drag id, and — for
+// Revise-column cards — an inline comment input wired to patchAsset({notes}).
+function boardCardEl(asset, idx) {
+  const card = cardEl(asset, idx);
+  // Strip any stray stacking artifacts — the board shows individual siblings,
+  // never a collapsed cover (groupByShot may have tagged this object as a cover
+  // for the grid). Remove the badge + class so it renders as a single version.
+  if (asset._stack) {
+    card.classList.remove('stacked');
+    delete card.dataset.stackShotId;
+    delete card.dataset.stackCount;
+    const sb = card.querySelector('.stack-badge');
+    if (sb) sb.remove();
+  }
+  card.dataset.shotId = asset.shot_id || '';
+  if (asset.id === state.boardFocusId) card.classList.add('board-focus');
+  // Revise column: inline one-line comment, reusing the drawer notes→PATCH pattern.
+  if (asset.status === 'revise') {
+    card.appendChild(buildReviseNote(asset));
+  }
+  return card;
+}
+
+// Inline revise-comment input for a Revise-column card. Commits on blur or
+// Cmd/Ctrl+Enter via patchAsset(id,{notes}); shows a "saved" tick. Same field
+// the drawer + agent read back as asset.notes.
+function buildReviseNote(asset) {
+  const wrap = document.createElement('div');
+  wrap.className = 'board-revise-note';
+  wrap.innerHTML = `<input type="text" placeholder="revision note…" value="${escapeHtml(asset.notes || '')}"><span class="brn-tick" title="saved">✓</span>`;
+  const input = wrap.querySelector('input');
+  const tick = wrap.querySelector('.brn-tick');
+  let savedValue = asset.notes || '';
+  // Don't let clicks/keys on the input bubble to the card (drawer open / drag).
+  input.addEventListener('click', e => e.stopPropagation());
+  input.addEventListener('mousedown', e => e.stopPropagation());
+  const commit = async () => {
+    const v = input.value;
+    if (v === savedValue) return;
+    try {
+      await patchAsset(asset.id, { notes: v });
+      savedValue = v;
+      asset.notes = v;
+      tick.classList.add('show');
+      setTimeout(() => tick.classList.remove('show'), 1400);
+    } catch (e) { /* patchAsset already toasts on failure */ }
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    e.stopPropagation();  // never trigger board hotkeys while typing a note
+  });
+  return wrap;
+}
+
+// Render a column's card list: group-by-shot for adjacency, individual sibling
+// cards, a per-shot "▶ Play all" chip when a shot has 2+ members in THIS column.
+function renderBoardColumnList(listEl, items) {
+  listEl.innerHTML = '';
+  if (items.length === 0) {
+    listEl.innerHTML = '<div class="board-col-empty">— empty —</div>';
+    return;
+  }
+  const { grouped, ungrouped, order } = groupByShot(items);
+  // Multi-member shots first (clustered), then single-member shots, then orphans —
+  // but keep groupByShot's newest-first intent by walking `order`.
+  order.forEach(sid => {
+    const members = grouped[sid];
+    if (members.length > 1) {
+      const cluster = document.createElement('div');
+      cluster.className = 'board-shot-cluster';
+      const chip = document.createElement('div');
+      chip.className = 'board-shot-chip';
+      chip.innerHTML = `<span>${escapeHtml(sid)} · ${members.length}v</span><button class="bsc-play" title="Play all versions side by side">▶ Play all</button>`;
+      chip.querySelector('.bsc-play').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openCompare(members.map(m => m.id).slice(0, 6));
+      });
+      cluster.appendChild(chip);
+      members.forEach((m, i) => cluster.appendChild(boardCardEl(m, i)));
+      listEl.appendChild(cluster);
+    } else {
+      listEl.appendChild(boardCardEl(members[0], 0));
+    }
+  });
+  ungrouped.forEach((m, i) => listEl.appendChild(boardCardEl(m, i)));
+}
+
+// THE board renderer. Board-scoped fetch → partition by status → columns.
+async function renderKanban() {
+  const root = $('#board-root');
+  if (!root) return;
+  // Capture per-column scrollTop so a re-render (e.g. after a hero cascade)
+  // doesn't lose the director's place.
+  const savedScroll = {};
+  root.querySelectorAll('.board-column').forEach(col => {
+    const list = col.querySelector('.board-col-list');
+    if (list) savedScroll[col.dataset.status] = list.scrollTop;
+  });
+
+  root.innerHTML = '<div class="board-col-empty" style="padding:40px">Loading board…</div>';
+  let data;
+  try {
+    data = await api(`/api/assets?${boardQuery()}`);
+  } catch (e) {
+    root.innerHTML = `<div class="board-col-empty" style="padding:40px;color:#c0392b">Failed to load board: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  state.boardItems = data.items || [];
+  const total = data.total || state.boardItems.length;
+  const capHit = state.boardItems.length >= 2000 && total > state.boardItems.length;
+
+  // Partition by status.
+  const byStatus = {};
+  state.boardItems.forEach(a => {
+    (byStatus[a.status] = byStatus[a.status] || []).push(a);
+  });
+
+  // Header: hotkey legend + optional truncation banner + More toggle.
+  const cols = activeBoardColumns();
+  const banner = capHit
+    ? `<div class="board-banner">Showing first 2000 of ${total} assets — narrow with a filter to see the rest.</div>`
+    : '';
+  const moreLabel = state.boardMoreOpen ? '− Hide Alternate / Legacy' : '+ Show Alternate / Legacy';
+  const legend = `<div class="board-hotkey-legend">
+    Focus a card, then <kbd>a</kbd> accept · <kbd>h</kbd> hero · <kbd>v</kbd> revise · <kbd>r</kbd> reject · <kbd>← → ↑ ↓</kbd> move focus · drag cards between columns.
+    <button class="board-col-action" id="board-more-toggle" style="margin-left:10px">${moreLabel}</button>
+  </div>`;
+
+  const lanes = cols.map(key => {
+    const meta = STATUSES.find(s => s.key === key) || { label: key, swatch: 'var(--surface-soft)' };
+    const items = byStatus[key] || [];
+    const facetCount = (state.facets.status && state.facets.status[key]) ?? items.length;
+    const reviseAction = key === 'revise'
+      ? `<button class="board-col-action" data-copy-revise title="Copy shot — note lines for handoff">⧉ Copy queue</button>`
+      : '';
+    return `<div class="board-column" data-status="${key}">
+      <div class="board-col-head">
+        <span class="board-col-swatch" style="background:${meta.swatch}"></span>
+        <span class="board-col-label">${escapeHtml(meta.label)}</span>
+        ${reviseAction}
+        <span class="board-col-count">${facetCount}</span>
+      </div>
+      <div class="board-col-list"></div>
+    </div>`;
+  }).join('');
+
+  root.innerHTML = banner + legend + `<div class="board-lanes">${lanes}</div>`;
+
+  // Fill each lane.
+  cols.forEach(key => {
+    const col = boardColumnEl(key);
+    const list = col.querySelector('.board-col-list');
+    renderBoardColumnList(list, byStatus[key] || []);
+  });
+
+  // Reconcile live counts (card-node count) against facets after fill.
+  recomputeBoardCounts();
+
+  // Restore scroll positions.
+  Object.keys(savedScroll).forEach(key => {
+    const col = boardColumnEl(key);
+    const list = col && col.querySelector('.board-col-list');
+    if (list) list.scrollTop = savedScroll[key];
+  });
+
+  // Wire interactions.
+  wireBoardDnD();
+  wireBoardChrome(root);
+  wireBoardMarquee(root);
+}
+
+// Per-COLUMN drag delegation (never per-card — re-rendered cards would lose
+// listeners). Cards already carry draggable=true + a dragstart that sets
+// dataTransfer to the asset id (from cardEl). We bind dragover/drop once per
+// lane and read the id from dataTransfer on drop.
+function wireBoardDnD() {
+  $$('#board-root .board-column').forEach(col => {
+    col.addEventListener('dragover', (e) => {
+      e.preventDefault();                 // mandatory or drop never fires
+      e.dataTransfer.dropEffect = 'move';
+      col.classList.add('drop-active');
+    });
+    col.addEventListener('dragleave', (e) => {
+      // Only clear when leaving the column entirely, not when crossing a child.
+      if (!col.contains(e.relatedTarget)) col.classList.remove('drop-active');
+    });
+    col.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      col.classList.remove('drop-active');
+      const id = Number(e.dataTransfer.getData('text/plain'));
+      if (!id) return;
+      const newStatus = col.dataset.status;
+      await boardMoveCard(id, newStatus);
+    });
+  });
+}
+
+// Optimistic move of a card to a new-status column, then PATCH. On failure,
+// re-insert the node at its exact previous position + restore counts.
+async function boardMoveCard(id, newStatus) {
+  const card = $(`#board-root .card[data-id="${id}"]`);
+  if (!card) return;
+  const prevStatus = card.dataset.status;
+  if (prevStatus === newStatus) return;   // self-drop / no-op — skip the network call
+
+  // Capture exact previous position for a clean revert.
+  const prevParent = card.parentNode;
+  const prevNextSibling = card.nextSibling;
+
+  // Optimistic: move the node now, recompute counts now.
+  const landed = moveCardToColumn(card, newStatus);
+  recomputeBoardCounts();
+
+  try {
+    const updated = await patchAsset(id, { status: newStatus });
+    // Hero cascade: the server may have demoted a DIFFERENT card (prior hero →
+    // accepted). Re-partition the whole board so the demoted card relocates.
+    if (newStatus === 'hero') {
+      await renderKanban();
+    } else if (landed) {
+      // If the card grew a revise note (or lost one), refresh its inline UI by
+      // re-rendering just this card in place.
+      refreshBoardCard(id, updated);
+    }
+  } catch (err) {
+    // Revert to exact prior position.
+    if (prevParent) {
+      if (prevNextSibling) prevParent.insertBefore(card, prevNextSibling);
+      else prevParent.appendChild(card);
+      card.dataset.status = prevStatus;
+    }
+    recomputeBoardCounts();
+    // patchAsset already toasted the failure.
+  }
+}
+
+// Re-render a single board card in place from fresh asset data (e.g. after a
+// status change toggles the Revise inline note on/off). Keeps the node's
+// position. No-op if the card isn't on the board.
+function refreshBoardCard(id, asset) {
+  const card = $(`#board-root .card[data-id="${id}"]`);
+  if (!card || !asset) return;
+  const fresh = boardCardEl(asset, 0);
+  card.replaceWith(fresh);
+  // If we just moved INTO revise, autofocus the note input.
+  if (asset.status === 'revise') {
+    const input = fresh.querySelector('.board-revise-note input');
+    if (input) input.focus();
+  }
+}
+
+// Column-header chrome: Copy revise queue, More toggle.
+function wireBoardChrome(root) {
+  const copyBtn = root.querySelector('[data-copy-revise]');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      copyReviseQueue();
+    });
+  }
+  const moreBtn = root.querySelector('#board-more-toggle');
+  if (moreBtn) {
+    moreBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.boardMoreOpen = !state.boardMoreOpen;
+      renderKanban();
+    });
+  }
+}
+
+// Copy the Revise queue as plain-text "shot_id — note" lines (skips empties).
+// Mirrors GET /api/assets?status=revise so the manual copy and the agent fetch
+// read the identical notes field.
+async function copyReviseQueue() {
+  const reviseItems = state.boardItems.filter(a => a.status === 'revise');
+  // Prefer live note values typed into inline inputs (not yet re-fetched).
+  const lines = [];
+  reviseItems.forEach(a => {
+    const card = $(`#board-root .card[data-id="${a.id}"]`);
+    const input = card && card.querySelector('.board-revise-note input');
+    const note = (input ? input.value : (a.notes || '')).trim();
+    if (note) lines.push(`${a.shot_id || ('#' + a.id)} — ${note}`);
+  });
+  const text = lines.join('\n');
+  if (!text) { flashToast('No revise notes to copy'); return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    flashToast(`Copied ${lines.length} revise note${lines.length !== 1 ? 's' : ''}`);
+  } catch (e) {
+    flashToast('Copy failed: ' + e.message, 'error');
+  }
+}
+
+// ── Board keyboard focus ──────────────────────────────────────────────
+// Focus model: state.boardFocusId. Arrows move focus across columns (←/→) and
+// within a column (↑/↓). a/r/v/h act on the focused card and advance.
+
+function boardFocusableCards() {
+  // DOM order across all visible lanes, left-to-right then top-to-bottom.
+  return $$('#board-root .board-col-list .card');
+}
+
+function setBoardFocus(id, scroll = true) {
+  state.boardFocusId = id;
+  $$('#board-root .card.board-focus').forEach(c => c.classList.remove('board-focus'));
+  if (id == null) return;
+  const card = $(`#board-root .card[data-id="${id}"]`);
+  if (card) {
+    card.classList.add('board-focus');
+    if (scroll) card.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+}
+
+function boardFocusedCardEl() {
+  return state.boardFocusId != null ? $(`#board-root .card[data-id="${state.boardFocusId}"]`) : null;
+}
+
+// Move focus. dir: 'left'|'right' = change column (same vertical slot-ish);
+// 'up'|'down' = move within the current column.
+function moveBoardFocus(dir) {
+  const cards = boardFocusableCards();
+  if (cards.length === 0) return;
+  let cur = boardFocusedCardEl();
+  if (!cur) { setBoardFocus(Number(cards[0].dataset.id)); return; }
+
+  if (dir === 'up' || dir === 'down') {
+    const list = cur.closest('.board-col-list');
+    const colCards = list ? Array.from(list.querySelectorAll('.card')) : [cur];
+    const i = colCards.indexOf(cur);
+    const next = dir === 'down' ? colCards[i + 1] : colCards[i - 1];
+    if (next) setBoardFocus(Number(next.dataset.id));
+    return;
+  }
+  // left/right: jump to the adjacent column, nearest card by vertical position.
+  const curCol = cur.closest('.board-column');
+  const allCols = $$('#board-root .board-column');
+  let ci = allCols.indexOf(curCol);
+  const step = dir === 'right' ? 1 : -1;
+  const curTop = cur.getBoundingClientRect().top;
+  for (let j = ci + step; j >= 0 && j < allCols.length; j += step) {
+    const colCards = Array.from(allCols[j].querySelectorAll('.board-col-list .card'));
+    if (colCards.length === 0) continue;
+    // pick the card whose top is closest to the current card's top
+    let best = colCards[0], bestDelta = Infinity;
+    colCards.forEach(c => {
+      const d = Math.abs(c.getBoundingClientRect().top - curTop);
+      if (d < bestDelta) { bestDelta = d; best = c; }
+    });
+    setBoardFocus(Number(best.dataset.id));
+    return;
+  }
+}
+
+// Act on the focused card (status change) and advance focus to the next card.
+// Mirrors the grid hotkeys but stays on the board.
+async function boardHotkeyAct(status) {
+  const card = boardFocusedCardEl();
+  if (!card) {
+    const first = boardFocusableCards()[0];
+    if (first) setBoardFocus(Number(first.dataset.id));
+    return;
+  }
+  const id = Number(card.dataset.id);
+  // Pre-compute the "next" focus target before the card moves columns.
+  const cards = boardFocusableCards();
+  const i = cards.indexOf(card);
+  const nextCard = cards[i + 1] || cards[i - 1] || null;
+  const nextId = nextCard && Number(nextCard.dataset.id) !== id ? Number(nextCard.dataset.id) : null;
+
+  await boardMoveCard(id, status);
+
+  if (status === 'revise') {
+    // Autofocus the revise note on the just-moved card (act + comment).
+    const moved = $(`#board-root .card[data-id="${id}"]`);
+    const input = moved && moved.querySelector('.board-revise-note input');
+    if (input) { input.focus(); setBoardFocus(id, false); return; }
+  }
+  // Act-and-advance: move focus to the next card (if it still exists on board).
+  if (nextId != null && $(`#board-root .card[data-id="${nextId}"]`)) setBoardFocus(nextId);
+  else if ($(`#board-root .card[data-id="${id}"]`)) setBoardFocus(id);
+  else setBoardFocus(boardFocusableCards()[0] ? Number(boardFocusableCards()[0].dataset.id) : null);
+}
+
+// ── Marquee multi-select ──────────────────────────────────────────────
+// Rubber-band selection that initiates ONLY on the empty board/column
+// background (never on a card — cards are draggable=true for column DnD, so
+// the two trigger surfaces are mutually exclusive). Feeds state.multiSelection.
+function wireBoardMarquee(root) {
+  // #board-root is a persistent node — renderKanban only swaps its innerHTML,
+  // never the element itself. Bind the mousedown ONCE so re-renders (view
+  // switch, refresh, hero re-partition, More toggle, 5s auto-poll) don't stack
+  // up duplicate marquee handlers (which would fire N marquees + N selection
+  // syncs per gesture). The flag survives innerHTML swaps.
+  if (root.dataset.marqueeWired) return;
+  root.dataset.marqueeWired = '1';
+  let startX = 0, startY = 0, box = null, dragging = false;
+
+  root.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    // Only start on empty background — bail if the press lands on a card, a
+    // button, an input, the play chip, etc.
+    if (e.target.closest('.card, button, input, a, .board-col-action, .board-shot-chip')) return;
+    startX = e.clientX; startY = e.clientY; dragging = false;
+    box = null;
+    const onMove = (ev) => {
+      const dx = Math.abs(ev.clientX - startX);
+      const dy = Math.abs(ev.clientY - startY);
+      if (!dragging && (dx > 5 || dy > 5)) {
+        dragging = true;
+        box = document.createElement('div');
+        box.className = 'marquee-box';
+        document.body.appendChild(box);
+        root.style.userSelect = 'none';
+      }
+      if (dragging && box) {
+        const x = Math.min(ev.clientX, startX), y = Math.min(ev.clientY, startY);
+        const w = Math.abs(ev.clientX - startX), h = Math.abs(ev.clientY - startY);
+        box.style.left = x + 'px'; box.style.top = y + 'px';
+        box.style.width = w + 'px'; box.style.height = h + 'px';
+      }
+    };
+    const onUp = (ev) => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      root.style.userSelect = '';
+      if (!dragging) {
+        // Plain background click (no real drag) → clear selection.
+        clearMultiSelection();
+        if (box) { box.remove(); box = null; }
+        return;
+      }
+      const rect = box.getBoundingClientRect();
+      $$('#board-root .board-col-list .card').forEach(card => {
+        const r = card.getBoundingClientRect();
+        const intersects = !(r.right < rect.left || r.left > rect.right || r.bottom < rect.top || r.top > rect.bottom);
+        if (intersects) {
+          const cid = Number(card.dataset.id);
+          state.multiSelection.add(cid);
+          card.classList.add('multi-selected');
+        }
+      });
+      if (box) { box.remove(); box = null; }
+      state.lastMultiAnchor = null;
+      renderMultiSelectChrome();
+      syncSelectionToServer();
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
 }
 
 // -------- Shots View (group by shot_id) -----------------------------------
@@ -4103,17 +4829,21 @@ function bindTopbar() {
     $$('.view-toggle button').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
     const view = b.dataset.view;
-    // Toggle between grid, scenes, and shots views
+    // Toggle between grid, scenes, shots, and board views
     $('#grid-root').style.display = 'none';
     $('#grid-more').style.display = 'none';
     $('#scenes-root').style.display = 'none';
     $('#shots-root').style.display = 'none';
+    $('#board-root').style.display = 'none';
     if (view === 'scenes') {
       $('#scenes-root').style.display = '';
       loadScenesView();
     } else if (view === 'shots') {
       $('#shots-root').style.display = '';
       loadShotsView();
+    } else if (view === 'board') {
+      $('#board-root').style.display = '';
+      renderKanban();
     } else {
       $('#grid-root').style.display = '';
       $('#grid-more').style.display = state.doneLoading ? 'none' : 'block';
@@ -4265,6 +4995,25 @@ function bindKeyboard() {
         if (vid.paused) vid.play(); else vid.pause();
         return;
       }
+    }
+    // ── Review Board hotkeys ──────────────────────────────────────────
+    // When the board is the active view, hotkeys act on the focused board
+    // card (state.boardFocusId), not the drawer's selectedId. inField above
+    // already prevents these from firing while typing a revise note.
+    const onBoardView = document.querySelector('.view-toggle button.active')?.dataset.view === 'board';
+    if (onBoardView) {
+      const boardMap = { a: 'accepted', r: 'rejected', v: 'revise', h: 'hero' };
+      if (e.key === '?' ) { /* legend is always visible in the board header */ return; }
+      if (e.key === 'ArrowLeft')  { e.preventDefault(); e.stopPropagation(); moveBoardFocus('left'); return; }
+      if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); moveBoardFocus('right'); return; }
+      if (e.key === 'ArrowUp')    { e.preventDefault(); e.stopPropagation(); moveBoardFocus('up'); return; }
+      if (e.key === 'ArrowDown')  { e.preventDefault(); e.stopPropagation(); moveBoardFocus('down'); return; }
+      if (e.key.toLowerCase() in boardMap) {
+        e.preventDefault(); e.stopPropagation();
+        boardHotkeyAct(boardMap[e.key.toLowerCase()]);
+        return;
+      }
+      // Fall through for other keys (Esc handled above, etc.)
     }
     if (!state.selectedId) {
       if (e.key === 'Enter' && state.items[0]) selectAsset(state.items[0].id);
