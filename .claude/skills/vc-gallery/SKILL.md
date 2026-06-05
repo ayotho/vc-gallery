@@ -368,6 +368,10 @@ than silently using a segment-card frame.
 
 ---
 
+## Changelog (2026-06-06)
+
+- **Board updates in place (no more shake on new clips)** — background polls (the new-clip scan + fire-completion) used to rebuild the whole board via `innerHTML`, which on the Review Board reset a playing preview/drawer video, kicked the cursor out of a revise note mid-type, and shook the layout whenever a clip landed. A background poll now **reconciles the board in place** (`reconcileKanban()`): cards are added/relocated/removed on the live DOM (a node move preserves a playing `<video>`), the card under active edit is never touched, the open drawer is no longer closed out (the close-drawer check now counts `boardItems`), and a marquee selection survives the poll. The full re-sort/re-cluster rebuild only runs on user-driven refreshes (filter / view change). Frontend-only, fully reversible. **Agent note:** nothing changes for agents — status/notes still go through `PATCH /api/assets/{id}`; the board just no longer flickers while you fire new generations during a review.
+
 ## Changelog (2026-06-05)
 
 - **Review Board (Kanban view)** — new 4th view (the dormant `board` tab revived). Columns = review statuses; a status change MOVES a card between columns instead of removing it (fixes "card vanishes on status change"). Drag / click / hotkey (`a/h/v/r`) + marquee multi-select all funnel through `PATCH /api/assets/{id}` (never `/reviews`). Inline Revise comment per card; "⧉ Copy queue" exports the revise worklist (matches `GET /api/assets?status=revise`). Reuses stacking, compare, filters, and the multi-select engine. Frontend-only, fully reversible. See **Review Board (Kanban view)** section above.
