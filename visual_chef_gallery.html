@@ -319,6 +319,65 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .filter-breadcrumb .fb-chip .fb-x:hover { opacity: 1; }
 .filter-breadcrumb .fb-clear { font-size: 11px; padding: 3px 10px; border-radius: var(--r-pill); background: transparent; color: #6f6c64; cursor: pointer; border: 1px solid transparent; }
 .filter-breadcrumb .fb-clear:hover { color: var(--ink); border-color: var(--hairline); }
+
+/* ── Top filter hub (Notion-style): + Filter + Presets ─────────────────
+   Lives in #filter-breadcrumb. The "+ Filter" button is always present (the
+   bar no longer hides when empty); chips render between it and the spacer. */
+.filter-breadcrumb .fb-add,
+.filter-breadcrumb .fb-presets-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 500; padding: 4px 11px; border-radius: var(--r-pill);
+  background: var(--canvas); color: var(--ink); cursor: pointer; border: 1px solid var(--hairline);
+}
+.filter-breadcrumb .fb-add:hover,
+.filter-breadcrumb .fb-presets-btn:hover { border-color: var(--ink); }
+.filter-breadcrumb .fb-add .fb-plus { font-size: 13px; line-height: 1; font-weight: 600; }
+.filter-breadcrumb .fb-spacer { flex: 1 1 auto; }
+/* anchor wrapper so the popover positions under its trigger */
+.fb-pop-anchor { position: relative; display: inline-flex; }
+/* Popover shared chrome */
+.fb-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
+  min-width: 220px; max-width: 300px; max-height: 360px; overflow-y: auto;
+  background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--r-md);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.14); padding: 6px;
+}
+.fb-pop[hidden] { display: none; }
+/* Presets popover sits at the far-right of the bar — right-align so it never
+   overflows the viewport edge. */
+#fb-presets-pop { left: auto; right: 0; }
+.fb-pop-head {
+  display: flex; align-items: center; gap: 6px; padding: 4px 8px 6px;
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: #6f6c64;
+}
+.fb-pop-back { cursor: pointer; color: var(--ink); font-size: 12px; padding: 0 2px; }
+.fb-pop-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 9px; border-radius: var(--r-sm); cursor: pointer;
+  font-size: 12.5px; color: var(--ink); background: transparent; border: none; text-align: left;
+}
+.fb-pop-row:hover, .fb-pop-row.kbd-focus { background: var(--surface-soft); }
+.fb-pop-row .fb-pop-count { margin-left: auto; font-size: 11px; color: #8a877f; font-family: var(--mono); }
+.fb-pop-row.is-current { font-weight: 600; }
+.fb-pop-row.is-current::before { content: '✓'; color: var(--success); font-size: 11px; }
+.fb-pop-empty { padding: 10px 9px; font-size: 11.5px; color: #9b988f; font-style: italic; }
+.fb-pop-swatch { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+/* Presets popover specifics */
+.fb-preset-item { display: flex; align-items: center; gap: 6px; }
+.fb-preset-item .fb-preset-apply { flex: 1 1 auto; }
+.fb-preset-item .fb-preset-del { cursor: pointer; color: #b8b5ad; font-size: 12px; padding: 2px 5px; border-radius: var(--r-sm); }
+.fb-preset-item .fb-preset-del:hover { color: var(--block-coral); background: var(--surface-soft); }
+.fb-preset-save { display: flex; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--hairline-soft); margin-top: 4px; }
+.fb-preset-save input {
+  flex: 1 1 auto; min-width: 0; font-size: 12px; padding: 5px 8px;
+  border: 1px solid var(--hairline); border-radius: var(--r-sm); background: var(--canvas); color: var(--ink); font-family: var(--sans);
+}
+.fb-preset-save input:focus { outline: none; border-color: var(--accent-magenta, #d97757); }
+.fb-preset-save button {
+  font-size: 11.5px; font-weight: 500; padding: 5px 11px; border-radius: var(--r-pill);
+  background: var(--primary); color: var(--on-primary); cursor: pointer; border: 1px solid var(--primary);
+}
+.fb-preset-save button:disabled { opacity: 0.4; cursor: not-allowed; }
 .multi-select-bar { display: flex; align-items: center; gap: 12px; padding: 8px 14px; margin: 0 0 var(--s-md); background: var(--surface-soft); border: 1px solid var(--hairline); border-radius: var(--r-md); font-size: 12.5px; color: var(--ink); }
 .multi-select-bar[hidden] { display: none; }
 .multi-select-bar .ms-ico { color: var(--accent-magenta, #d97757); font-size: 9px; }
@@ -1996,6 +2055,11 @@ function renderRefinements() {
   fill('#refine-workflow', '#refine-workflow-label', state.facets.workflow, state.filters.workflow, 'workflow · any');
   // scene facet not in /api/facets; derive a fallback set if absent
   fill('#refine-scene',    '#refine-scene-label',    state.facets.scene || {}, state.filters.scene, 'scene · any');
+  // Keep the media-type segmented buttons in sync too, so a media filter set
+  // from the top hub (or a preset) lights up the correct sidebar button.
+  $$('#filter-media button').forEach(b => {
+    b.classList.toggle('active', b.dataset.media === state.filters.media_type);
+  });
   renderShotBrowser();
 }
 
@@ -2312,19 +2376,252 @@ function renderCanvasHead() {
   $('#counter-total').textContent = state.totalAssets.toLocaleString();
 }
 
+// Canonical filterable properties for the top hub. Order = popover order.
+// Single value per property today; the popover is structured so a future
+// multi-select (server "is any of") is an additive change, not a rewrite.
+const FILTER_LABELS = { status: 'Status', media_type: 'Media', source_type: 'Source', model: 'Model', workflow: 'Workflow', scene: 'Segment', shot_id: 'Shot' };
+const FILTER_PROP_ORDER = ['status', 'media_type', 'source_type', 'model', 'workflow', 'scene', 'shot_id'];
+
 function renderFilterBreadcrumb() {
   const el = $('#filter-breadcrumb');
   if (!el) return;
   const f = state.filters;
-  const LABELS = { status: 'Status', source_type: 'Source', model: 'Model', workflow: 'Workflow', scene: 'Segment', shot_id: 'Shot', media_type: 'Media' };
+  const LABELS = FILTER_LABELS;
   const active = Object.entries(f).filter(([, v]) => v && typeof v === 'string' && v.length > 0);
-  if (active.length === 0) { el.hidden = true; return; }
+  // The bar is now ALWAYS shown — it hosts the "+ Filter" + Presets controls
+  // even with no active filters (so the top bar is the primary place to ADD).
   el.hidden = false;
-  el.innerHTML = '<span class="fb-label">Filtered by</span>' +
-    active.map(([k, v]) =>
-      `<span class="fb-chip">${LABELS[k] || k}: ${escapeHtml(v)} <span class="fb-x" data-filter="${k}">✕</span></span>`
-    ).join('') +
-    (active.length > 1 ? '<button class="fb-clear" id="fb-clear-all">Clear all</button>' : '');
+  const chips = active.map(([k, v]) =>
+    `<span class="fb-chip">${LABELS[k] || k}: ${escapeHtml(v)} <span class="fb-x" data-filter="${k}">✕</span></span>`
+  ).join('');
+  el.innerHTML =
+    `<span class="fb-pop-anchor">
+       <button class="fb-add" id="fb-add-btn" title="Add a filter"><span class="fb-plus">+</span> Filter</button>
+       <div class="fb-pop" id="fb-add-pop" hidden></div>
+     </span>` +
+    (active.length ? '<span class="fb-label">Filtered by</span>' : '') +
+    chips +
+    (active.length > 1 ? '<button class="fb-clear" id="fb-clear-all">Clear all</button>' : '') +
+    `<span class="fb-spacer"></span>` +
+    `<span class="fb-pop-anchor">
+       <button class="fb-presets-btn" id="fb-presets-btn" title="Saved filter presets">☆ Presets</button>
+       <div class="fb-pop" id="fb-presets-pop" hidden></div>
+     </span>`;
+  // Re-bind the hub controls (the bar's innerHTML was just replaced).
+  wireFilterHub();
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  TOP FILTER HUB — Notion-style "+ Filter" (property→value) + Presets.
+//  Reuses state.filters / state.facets / FILTER_LABELS / refresh() and the
+//  existing breadcrumb chip system. No parallel filter state, no backend.
+// ════════════════════════════════════════════════════════════════════════
+
+// Presets persist per client+project, mirroring SCENE_ORDER_KEY's pattern.
+const FILTER_PRESETS_KEY = (() => {
+  try {
+    const url = new URL(window.location.href);
+    const c = url.searchParams.get('client') || 'default';
+    const p = url.searchParams.get('project') || 'default';
+    return `vc-gallery.filter-presets.${c}.${p}`;
+  } catch { return 'vc-gallery.filter-presets.default'; }
+})();
+
+function loadFilterPresets() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(FILTER_PRESETS_KEY) || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+function saveFilterPresets(arr) {
+  try { localStorage.setItem(FILTER_PRESETS_KEY, JSON.stringify(arr)); } catch {}
+}
+
+// Empty defaults so applying a preset clears any property the preset omits.
+function emptyFilterDefaults() {
+  const d = {};
+  Object.keys(state.filters).forEach(k => {
+    d[k] = (typeof state.filters[k] === 'boolean') ? false : '';
+  });
+  return d;
+}
+
+// Apply a {filters} snapshot: reset to empty defaults, overlay the preset's
+// values, refresh the active view, and resync the sidebar selects.
+function applyFilterPreset(filters) {
+  state.filters = { ...emptyFilterDefaults(), ...(filters || {}) };
+  refresh();
+  // refresh() re-renders status/source sidebar filters + the breadcrumb, but
+  // NOT the model/workflow/scene <select>s — sync those explicitly.
+  renderRefinements();
+  closeFilterPopovers();
+}
+
+let _fbOutsideHandler = null;
+let _fbEscHandler = null;
+function closeFilterPopovers() {
+  const a = $('#fb-add-pop'); if (a) a.hidden = true;
+  const p = $('#fb-presets-pop'); if (p) p.hidden = true;
+  if (_fbOutsideHandler) { document.removeEventListener('mousedown', _fbOutsideHandler, true); _fbOutsideHandler = null; }
+  if (_fbEscHandler) { document.removeEventListener('keydown', _fbEscHandler, true); _fbEscHandler = null; }
+}
+
+// Open a popover; wire outside-click + Esc to close. `anchorPop` is the .fb-pop.
+function openFilterPopover(anchorPop) {
+  closeFilterPopovers();
+  anchorPop.hidden = false;
+  _fbOutsideHandler = (e) => {
+    if (!anchorPop.contains(e.target) && !e.target.closest('#fb-add-btn, #fb-presets-btn')) {
+      closeFilterPopovers();
+    }
+  };
+  _fbEscHandler = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeFilterPopovers(); } };
+  // capture phase so Esc closes the popover before the global gallery Esc handler
+  document.addEventListener('mousedown', _fbOutsideHandler, true);
+  document.addEventListener('keydown', _fbEscHandler, true);
+}
+
+// Render the "+ Filter" popover at the PROPERTY level (list of properties that
+// have at least one facet value). Picking one drills into its values.
+function renderAddPropertyMenu() {
+  const pop = $('#fb-add-pop');
+  if (!pop) return;
+  const rows = FILTER_PROP_ORDER.map(prop => {
+    const dict = state.facets[prop] || {};
+    const n = Object.keys(dict).length;
+    if (n === 0) return '';  // hide properties with no values
+    const current = state.filters[prop];
+    const currentLabel = current ? ` · ${current}` : '';
+    return `<button class="fb-pop-row" data-prop="${prop}">
+      <span>${escapeHtml(FILTER_LABELS[prop] || prop)}${current ? escapeHtml(currentLabel) : ''}</span>
+      <span class="fb-pop-count">${n}</span>
+    </button>`;
+  }).filter(Boolean).join('');
+  pop.innerHTML = `<div class="fb-pop-head">Filter by</div>` +
+    (rows || `<div class="fb-pop-empty">No filterable values in this folder.</div>`);
+  pop.querySelectorAll('.fb-pop-row[data-prop]').forEach(btn => {
+    btn.addEventListener('click', () => renderAddValueMenu(btn.dataset.prop));
+  });
+}
+
+// Render the value level for a chosen property. Picking a value sets the
+// single-value filter and refreshes (chip appears via the breadcrumb).
+function renderAddValueMenu(prop) {
+  const pop = $('#fb-add-pop');
+  if (!pop) return;
+  const dict = state.facets[prop] || {};
+  const isStatus = prop === 'status';
+  const keys = Object.keys(dict).sort((a, b) => (dict[b] - dict[a]));  // by count desc
+  const current = state.filters[prop];
+  // value rows. Wrapped per-row (not a bare <option>) so a future multi-select
+  // (checkbox per value → array) is a localized change here, not a rewrite.
+  const rows = keys.map(val => {
+    const swatch = isStatus
+      ? `<span class="fb-pop-swatch" style="background:${(STATUSES.find(s => s.key === val) || {}).swatch || 'var(--surface-soft)'}"></span>`
+      : '';
+    return `<button class="fb-pop-row ${val === current ? 'is-current' : ''}" data-prop="${prop}" data-val="${escapeHtml(val)}">
+      ${swatch}<span>${escapeHtml(val)}</span><span class="fb-pop-count">${dict[val]}</span>
+    </button>`;
+  }).join('');
+  const clearRow = current
+    ? `<button class="fb-pop-row" data-prop="${prop}" data-val=""><span style="color:#9b988f">— clear ${escapeHtml(FILTER_LABELS[prop] || prop)}</span></button>`
+    : '';
+  pop.innerHTML =
+    `<div class="fb-pop-head"><span class="fb-pop-back" id="fb-pop-back">← </span>${escapeHtml(FILTER_LABELS[prop] || prop)}</div>` +
+    (rows || `<div class="fb-pop-empty">No values.</div>`) + clearRow;
+  pop.querySelector('#fb-pop-back')?.addEventListener('click', renderAddPropertyMenu);
+  pop.querySelectorAll('.fb-pop-row[data-val]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.filters[prop] = btn.dataset.val;   // single value (multi = future)
+      refresh();
+      // status/source/media re-render via refresh(); sync model/workflow/scene selects too
+      renderRefinements();
+      closeFilterPopovers();
+    });
+  });
+}
+
+// Render the Presets popover: saved list (apply / delete) + an inline save row.
+function renderPresetsMenu() {
+  const pop = $('#fb-presets-pop');
+  if (!pop) return;
+  const presets = loadFilterPresets();
+  const list = presets.length
+    ? presets.map((p, i) => `<div class="fb-pop-row fb-preset-item">
+        <span class="fb-preset-apply" data-apply="${i}">${escapeHtml(p.name)}</span>
+        <span class="fb-preset-del" data-del="${i}" title="Delete preset">✕</span>
+      </div>`).join('')
+    : `<div class="fb-pop-empty">No saved presets yet.</div>`;
+  // disable Save when no filters are active (nothing to snapshot)
+  const hasActive = Object.entries(state.filters).some(([, v]) => v && typeof v === 'string' && v.length > 0);
+  pop.innerHTML =
+    `<div class="fb-pop-head">Saved views</div>` + list +
+    `<div class="fb-preset-save">
+       <input type="text" id="fb-preset-name" placeholder="Name this view…" maxlength="40">
+       <button id="fb-preset-save-btn" ${hasActive ? '' : 'disabled'} title="${hasActive ? 'Save current filters' : 'Set a filter first'}">Save</button>
+     </div>`;
+  // apply
+  pop.querySelectorAll('[data-apply]').forEach(el => {
+    el.addEventListener('click', () => {
+      const p = loadFilterPresets()[Number(el.dataset.apply)];
+      if (p) applyFilterPreset(p.filters);
+    });
+  });
+  // delete
+  pop.querySelectorAll('[data-del]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const arr = loadFilterPresets();
+      arr.splice(Number(el.dataset.del), 1);
+      saveFilterPresets(arr);
+      renderPresetsMenu();  // re-render the list in place
+    });
+  });
+  // inline save (NO window.prompt — blocked in this env)
+  const input = pop.querySelector('#fb-preset-name');
+  const saveBtn = pop.querySelector('#fb-preset-save-btn');
+  const doSave = () => {
+    const name = (input.value || '').trim();
+    if (!name) { input.focus(); return; }
+    // snapshot only the active (non-empty) string filters
+    const snap = {};
+    Object.entries(state.filters).forEach(([k, v]) => {
+      if (v && typeof v === 'string' && v.length > 0) snap[k] = v;
+    });
+    const arr = loadFilterPresets();
+    const existingIdx = arr.findIndex(p => p.name === name);
+    if (existingIdx >= 0) arr[existingIdx] = { name, filters: snap };  // overwrite same-name
+    else arr.push({ name, filters: snap });
+    saveFilterPresets(arr);
+    flashToast(`Saved preset "${name}"`);
+    renderPresetsMenu();
+  };
+  if (saveBtn) saveBtn.addEventListener('click', doSave);
+  if (input) input.addEventListener('keydown', (e) => {
+    e.stopPropagation();  // don't trigger gallery hotkeys / Esc-close mid-type
+    if (e.key === 'Enter') { e.preventDefault(); doSave(); }
+  });
+}
+
+// Wire the two hub triggers. Called every renderFilterBreadcrumb (the bar's
+// innerHTML is replaced each time), so we (re)attach to the fresh buttons.
+function wireFilterHub() {
+  const addBtn = $('#fb-add-btn');
+  if (addBtn) addBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const pop = $('#fb-add-pop');
+    if (!pop.hidden) { closeFilterPopovers(); return; }
+    renderAddPropertyMenu();
+    openFilterPopover(pop);
+  });
+  const presetsBtn = $('#fb-presets-btn');
+  if (presetsBtn) presetsBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const pop = $('#fb-presets-pop');
+    if (!pop.hidden) { closeFilterPopovers(); return; }
+    renderPresetsMenu();
+    openFilterPopover(pop);
+  });
 }
 
 // -------- Selection bridge --------------------------------------------
