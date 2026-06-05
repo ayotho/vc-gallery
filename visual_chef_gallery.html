@@ -440,7 +440,10 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
   background: rgba(255, 61, 138, 0.10);
   border-radius: 2px;
 }
-.board-hotkey-legend { font-size: 11.5px; color: #6f6c64; margin: 0 0 10px; }
+.board-segment { font-size: 11.5px; color: #6f6c64; display: inline-flex; align-items: center; gap: 5px; }
+.board-segment select { font-size: 11.5px; font-family: var(--sans); padding: 3px 6px; border: 1px solid var(--hairline); border-radius: var(--r-sm); background: var(--canvas); color: var(--ink); cursor: pointer; max-width: 220px; }
+.board-segment select:hover { border-color: var(--ink); }
+.board-hotkey-legend { font-size: 11.5px; color: #6f6c64; margin: 0 0 10px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .board-hotkey-legend kbd {
   background: var(--surface-soft); border: 1px solid var(--hairline); border-radius: 4px;
   padding: 1px 5px; font-family: var(--mono); font-size: 10.5px; color: var(--ink);
@@ -510,7 +513,8 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 
 /* Shots view */
 /* Asset-ID chip in drawer header — small mono pill so director can quote "#2095" in chat */
-.asset-id-chip { font-family: var(--mono); font-size: 10.5px; color: #6f6c64; background: var(--surface-soft); padding: 2px 7px; border-radius: var(--r-pill); margin-left: 8px; user-select: text; }
+.asset-id-chip { font-family: var(--mono); font-size: 10.5px; color: #6f6c64; background: var(--surface-soft); padding: 2px 7px; border-radius: var(--r-pill); margin-left: 8px; user-select: text; cursor: pointer; }
+.asset-id-chip:hover { background: rgba(0,0,0,0.85); color: #fff; }
 @media (max-width: 700px) { .asset-id-chip { display: none; } }
 
 .thumb { position: relative; display: block; }
@@ -2547,7 +2551,14 @@ async function fillDrawer(id) {
   $('#drawer-pos').innerHTML = (state.selectedIndex >= 0
     ? `${state.selectedIndex + 1} / ${state.total}`
     : `— / ${state.total}`)
-    + ` <span class="asset-id-chip" title="Asset ID — quote in chat as &quot;#${asset.id}&quot;">#${asset.id}</span>`;
+    + ` <span class="asset-id-chip" data-copy-id="${asset.id}" title="Click to copy #${asset.id}">#${asset.id}</span>`;
+  // Click the always-visible drawer #id chip to copy it (the card chip is
+  // hover-only) — quoting #ids in chat/handoff is a constant need.
+  const drawerIdChip = $('#drawer-pos .asset-id-chip');
+  if (drawerIdChip) drawerIdChip.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText('#' + asset.id); flashToast('Copied #' + asset.id); }
+    catch { flashToast('Copy failed', 'error'); }
+  });
 
   // Drawer body
   const status = STATUSES.find(s => s.key === asset.status) || STATUSES[0];
@@ -4036,8 +4047,20 @@ async function renderKanban() {
     ? `<div class="board-banner">Showing first 2000 of ${total} assets — narrow with a filter to see the rest.</div>`
     : '';
   const moreLabel = state.boardMoreOpen ? '− Hide Alternate / Legacy' : '+ Show Alternate / Legacy';
+  // Segment (scene) quick-filter — drives the shared state.filters.scene so it
+  // stays consistent with the sidebar. Option list = facet scenes ∪ scenes in
+  // the current fetch ∪ the active one, so the selected segment is always present.
+  const sceneCounts = state.facets.scene || {};
+  const sceneSet = new Set(Object.keys(sceneCounts));
+  state.boardItems.forEach(a => { if (a.scene) sceneSet.add(a.scene); });
+  if (state.filters.scene) sceneSet.add(state.filters.scene);
+  const sceneOpts = ['<option value="">All segments</option>'].concat(
+    [...sceneSet].sort().map(s => `<option value="${escapeHtml(s)}"${s === state.filters.scene ? ' selected' : ''}>${escapeHtml(s)}${sceneCounts[s] ? ` (${sceneCounts[s]})` : ''}</option>`)
+  ).join('');
+  const segmentFilter = `<label class="board-segment">Segment <select id="board-segment">${sceneOpts}</select></label>`;
   const legend = `<div class="board-hotkey-legend">
-    Focus a card, then <kbd>a</kbd> accept · <kbd>h</kbd> hero · <kbd>v</kbd> revise · <kbd>r</kbd> reject · <kbd>← → ↑ ↓</kbd> move focus · drag cards between columns.
+    ${segmentFilter}
+    <span>·</span> Focus a card, then <kbd>a</kbd> accept · <kbd>h</kbd> hero · <kbd>v</kbd> revise · <kbd>r</kbd> reject · <kbd>← → ↑ ↓</kbd> move focus · drag between columns.
     <button class="board-col-action" id="board-more-toggle" style="margin-left:10px">${moreLabel}</button>
   </div>`;
 
@@ -4181,6 +4204,16 @@ function wireBoardChrome(root) {
       renderKanban();
     });
   }
+  // Segment quick-filter → drives the shared scene filter + keeps the sidebar in sync.
+  const segSel = root.querySelector('#board-segment');
+  if (segSel) {
+    segSel.addEventListener('change', () => {
+      state.filters.scene = segSel.value;
+      const sidebarSel = $('#refine-scene');
+      if (sidebarSel) sidebarSel.value = segSel.value;
+      renderKanban();
+    });
+  }
 }
 
 // Copy the Revise queue as plain-text "shot_id — note" lines (skips empties).
@@ -4314,7 +4347,7 @@ function wireBoardMarquee(root) {
     if (e.button !== 0) return;
     // Only start on empty background — bail if the press lands on a card, a
     // button, an input, the play chip, etc.
-    if (e.target.closest('.card, button, input, a, .board-col-action, .board-shot-chip')) return;
+    if (e.target.closest('.card, button, input, select, label, a, .board-col-action, .board-shot-chip')) return;
     startX = e.clientX; startY = e.clientY; dragging = false;
     box = null;
     const onMove = (ev) => {
