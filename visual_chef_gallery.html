@@ -427,6 +427,12 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .board-revise-note input:focus { outline: none; border-color: var(--accent-magenta, #d97757); }
 .board-revise-note .brn-tick { font-size: 11px; color: var(--success); opacity: 0; transition: opacity .15s ease; }
 .board-revise-note .brn-tick.show { opacity: 1; }
+.board-revise-note .brn-copy {
+  flex: 0 0 auto; font-size: 11px; line-height: 1; padding: 4px 7px;
+  border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  background: var(--canvas); color: var(--ink); cursor: pointer;
+}
+.board-revise-note .brn-copy:hover { border-color: var(--ink); }
 /* Marquee rubber-band selection box */
 .marquee-box {
   position: fixed; z-index: 50; pointer-events: none;
@@ -3915,7 +3921,7 @@ function boardCardEl(asset, idx) {
 function buildReviseNote(asset) {
   const wrap = document.createElement('div');
   wrap.className = 'board-revise-note';
-  wrap.innerHTML = `<input type="text" placeholder="revision note…" value="${escapeHtml(asset.notes || '')}"><span class="brn-tick" title="saved">✓</span>`;
+  wrap.innerHTML = `<input type="text" placeholder="revision note…" value="${escapeHtml(asset.notes || '')}"><button class="brn-copy" title="Copy this shot — note">⧉</button><span class="brn-tick" title="saved">✓</span>`;
   const input = wrap.querySelector('input');
   const tick = wrap.querySelector('.brn-tick');
   let savedValue = asset.notes || '';
@@ -3937,6 +3943,21 @@ function buildReviseNote(asset) {
   input.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); input.blur(); }
     e.stopPropagation();  // never trigger board hotkeys while typing a note
+  });
+  // Per-card copy: grab just THIS shot's "shot_id — note" line (same format the
+  // column "Copy queue" emits) so a single card can be handed off on its own.
+  const copyBtn = wrap.querySelector('.brn-copy');
+  copyBtn.addEventListener('mousedown', e => e.stopPropagation());
+  copyBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const note = input.value.trim();
+    const line = `${asset.shot_id || ('#' + asset.id)}${note ? ' — ' + note : ''}`;
+    try {
+      await navigator.clipboard.writeText(line);
+      tick.classList.add('show');
+      setTimeout(() => tick.classList.remove('show'), 1400);
+      flashToast('Copied');
+    } catch (err) { flashToast('Copy failed: ' + err.message, 'error'); }
   });
   return wrap;
 }
