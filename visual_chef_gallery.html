@@ -3880,8 +3880,21 @@ function buildQuery() {
 // in-flight pollForChanges every 5s).
 let _refreshVersion = 0;
 
-async function refresh() {
-  clearMultiSelection();
+async function refresh(opts = {}) {
+  // BACKGROUND POLL ON THE BOARD (a new clip was scanned / a fire completed):
+  // reconcile the board IN PLACE and do nothing else. Skipping the grid re-fetch,
+  // the multi-select clear, the filter-bar rebuild, and the drawer-close tail
+  // below is what keeps a playing preview, an open drawer, a marquee selection,
+  // and a focused revise note from being disturbed every few seconds — the fix
+  // for "the board goes shaky / kicks me out of the note / playback resets when a
+  // new clip lands." User-driven refreshes (filter / view change) still take the
+  // full path and re-sort + re-cluster the board.
+  const onBoard = document.querySelector('.view-toggle button.active')?.dataset.view === 'board';
+  if (opts.background && onBoard) {
+    await reconcileKanban();   // re-fetches board data + recomputes counts in place
+    return;
+  }
+  if (!opts.background) clearMultiSelection();   // never wipe a selection on a background poll
   const myVersion = ++_refreshVersion;
   state.offset = 0;
   state.doneLoading = false;
@@ -3899,13 +3912,22 @@ async function refresh() {
   const activeView = document.querySelector('.view-toggle button.active')?.dataset.view;
   if (activeView === 'scenes') loadScenesView();
   else if (activeView === 'shots') loadShotsView();
-  else if (activeView === 'board') renderKanban();
-  // If the previously selected asset isn't in the new result set, close
-  // the drawer instead of leaving stale content behind.
-  if (state.selectedId && !state.items.some(a => a.id === state.selectedId)) {
+  // Background polls (new-clip scan, fire completion) reconcile the board in
+  // place so a playing preview / a note being typed survives. Only user-driven
+  // refreshes (filter / view change) do the full re-sort + re-cluster rebuild.
+  else if (activeView === 'board') opts.background ? reconcileKanban() : renderKanban();
+  // If the previously selected asset isn't in the new result set, close the
+  // drawer instead of leaving stale content behind. Count the BOARD set too — on
+  // the board the selected asset lives in state.boardItems, not the grid page
+  // (state.items), so checking only the grid would wrongly close the drawer (and
+  // reset its playing video) for an asset that's still live. Mirrors patchAsset.
+  if (state.selectedId
+      && !state.items.some(a => a.id === state.selectedId)
+      && !state.boardItems.some(a => a.id === state.selectedId)) {
     closeDrawer();
   } else if (state.selectedId) {
-    state.selectedIndex = state.items.findIndex(a => a.id === state.selectedId);
+    const i = state.items.findIndex(a => a.id === state.selectedId);
+    if (i >= 0) state.selectedIndex = i;   // keep a board-only selection's index valid
   }
 }
 
@@ -3916,7 +3938,11 @@ async function loadMore(append = true, version = null) {
   // (scroll-bottom), keep the lock to avoid double-fetching the same page.
   if (version === null && state.loading) return;
   state.loading = true;
-  $('#grid-more').style.display = 'block';
+  // Only the grid uses the "Loading more…" bar. It sits above the board / segments
+  // views, so showing it on a poll while one of those is active shifts the whole
+  // view down (the board "shakes"). Gate both writes on the grid being visible.
+  const gridActive = $('#grid-root').style.display !== 'none';
+  if (gridActive) $('#grid-more').style.display = 'block';
   try {
     const r = await api(`/api/assets?${buildQuery()}`);
     // Ignore stale response if a newer refresh has started
@@ -3932,7 +3958,7 @@ async function loadMore(append = true, version = null) {
     flashToast('Load failed: ' + e.message, 'error');
   } finally {
     state.loading = false;
-    $('#grid-more').style.display = state.doneLoading ? 'none' : 'block';
+    if (gridActive) $('#grid-more').style.display = state.doneLoading ? 'none' : 'block';
   }
 }
 
@@ -4496,6 +4522,104 @@ function refreshBoardCard(id, asset) {
   }
 }
 
+// Add/remove a card's inline revise-note to match its status. Used when a card
+// is RELOCATED in place (not rebuilt) so we keep its video element + position.
+function syncReviseNote(card, asset) {
+  const existing = card.querySelector('.board-revise-note');
+  if (asset.status === 'revise') {
+    if (!existing) card.appendChild(buildReviseNote(asset));
+  } else if (existing) {
+    existing.remove();
+  }
+}
+
+// Incremental, NON-DESTRUCTIVE board update for BACKGROUND refreshes (the
+// new-clip scan poll + the fire-completion poll). renderKanban() rebuilds the
+// whole board via innerHTML, which resets every <video> mid-playback and kills
+// focus in any revise-note <input> being typed — that's the "board goes shaky /
+// kicks me out of the note / playback resets when a new clip lands" bug.
+//
+// This reconciles the LIVE DOM instead: add new cards, relocate status-changed
+// cards (a node move preserves video state + scroll), drop vanished cards, and
+// sync counts — while never touching a card the director is mid-interaction with.
+// Falls back to a full render if the board hasn't been built yet.
+//
+// Tradeoffs (acceptable for a background tick; a later full render reforms them):
+//  · new cards append to the bottom of their column (next to a shot sibling if
+//    present) rather than re-sorting newest-first — deliberately no reshuffle.
+//  · newly-paired siblings don't form the cluster chip until the next full render.
+async function reconcileKanban() {
+  const root = $('#board-root');
+  if (!root || !root.querySelector('.board-lanes')) return renderKanban();
+
+  // Snapshot the refresh version so a user-driven refresh (filter / view change)
+  // that races in during our fetch wins: we bail instead of repainting the board
+  // with now-stale background data. Mirrors loadMore's stale-response guard.
+  const myVersion = _refreshVersion;
+  let data;
+  try {
+    data = await api(`/api/assets?${boardQuery()}`);
+  } catch (e) {
+    return;  // background path — keep the current board on a transient error
+  }
+  if (myVersion !== _refreshVersion) return;  // a newer user refresh started mid-fetch — let it win
+  const items = data.items || [];
+  state.boardItems = items;
+
+  const cols = activeBoardColumns();
+  const byId = new Map(items.map(a => [a.id, a]));
+
+  // The card the director is actively inside (focused note input, etc.). Never
+  // mutate it this cycle — even if its data changed — so focus + typing survive.
+  const activeEl = document.activeElement;
+  const lockedCard = activeEl && activeEl.closest ? activeEl.closest('#board-root .card') : null;
+  const lockedId = lockedCard ? Number(lockedCard.dataset.id) : null;
+
+  // 1) Remove cards that dropped out of the result set.
+  $$('#board-root .card').forEach(card => {
+    const id = Number(card.dataset.id);
+    if (!byId.has(id) && id !== lockedId) card.remove();
+  });
+
+  // 2) Add new cards; relocate existing cards whose status changed; sync notes.
+  items.forEach(a => {
+    if (a.id === lockedId) return;            // leave the in-edit card untouched
+    const onBoardCol = cols.includes(a.status);
+    let card = $(`#board-root .card[data-id="${a.id}"]`);
+    if (!card) {
+      if (onBoardCol) {                       // new clip — place it, don't rebuild siblings
+        card = boardCardEl(a, 0);
+        moveCardToColumn(card, a.status);
+      }
+      return;
+    }
+    if (card.dataset.status !== a.status) {
+      if (onBoardCol) {
+        moveCardToColumn(card, a.status);     // node move preserves a playing <video>
+        syncReviseNote(card, a);              // toggle the inline note on enter/leave revise
+      } else {
+        card.remove();                        // moved to an off-board status (draft/firing/…)
+      }
+    } else {
+      // Same column — keep the inline note text in sync (never while it's focused).
+      const input = card.querySelector('.board-revise-note input');
+      if (input && document.activeElement !== input) input.value = a.notes || '';
+    }
+  });
+
+  // 3) Restore/clear the "— empty —" placeholder per column after the churn.
+  cols.forEach(key => {
+    const list = boardColumnEl(key)?.querySelector('.board-col-list');
+    if (!list) return;
+    const hasCards = list.querySelector('.card');
+    const empty = list.querySelector('.board-col-empty');
+    if (!hasCards && !empty) list.innerHTML = '<div class="board-col-empty">— empty —</div>';
+    if (hasCards && empty) empty.remove();
+  });
+
+  recomputeBoardCounts();
+}
+
 // Column-header chrome: Copy revise queue, More toggle.
 function wireBoardChrome(root) {
   const copyBtn = root.querySelector('[data-copy-revise]');
@@ -4908,7 +5032,7 @@ async function pollForChanges() {
     const canvas = $('.canvas');
     const atTop = !canvas || canvas.scrollTop < 200;
     if (atTop) {
-      await refresh();
+      await refresh({ background: true });
     } else {
       renderCanvasHead(); renderFilterBreadcrumb();
     }
@@ -5513,7 +5637,9 @@ async function refreshFires(forceRender) {
     // Re-fetch the current grid page so completed fires render with their
     // final status, thumbnail, size, etc. Lightweight — uses the existing
     // request-version counter so it won't fight an in-flight user refresh.
-    refresh().catch(() => {});
+    // background:true → on the board this reconciles in place (no full rebuild),
+    // so a preview that's playing or a revise note being typed isn't disturbed.
+    refresh({ background: true }).catch(() => {});
   }
   // Render list when panel open
   if (firesState.open && (forceRender || firesState.viewingPid === null)) renderFires();
