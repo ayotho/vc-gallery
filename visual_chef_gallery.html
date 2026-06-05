@@ -3475,6 +3475,15 @@ async function patchAsset(id, payload) {
             // Revise) or disappears (out of Revise) correctly.
             refreshBoardCard(id, updated);
           }
+        } else if ('notes' in updated) {
+          // Notes-only change (e.g. edited in the DRAWER while this card sits in
+          // Revise). Sync the card's inline note input IN PLACE so it reflects the
+          // new text — but NEVER while the user is typing into that very input
+          // (that's where a board-side edit originates; clobbering kills focus).
+          const noteInput = card.querySelector('.board-revise-note input');
+          if (noteInput && document.activeElement !== noteInput) {
+            noteInput.value = updated.notes || '';
+          }
         }
         recomputeBoardCounts();
       }
@@ -3499,7 +3508,10 @@ async function patchAsset(id, payload) {
       }
     }
     if (id === state.selectedId) {
-      const stillPresent = state.items.some(a => a.id === id);
+      // Count board items too — on the board an asset may not be in the grid's
+      // current page (state.items) but is still live; fillDrawer fetches by id,
+      // so re-fill rather than wrongly closing the drawer on a board edit.
+      const stillPresent = state.items.some(a => a.id === id) || state.boardItems.some(a => a.id === id);
       if (stillPresent) await fillDrawer(id);
       else closeDrawer();
     }
