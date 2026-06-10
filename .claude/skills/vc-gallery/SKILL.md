@@ -110,6 +110,35 @@ POST /api/assets/{id}/inherit
 
 Copies `shot_id` and `scene` from source asset to target asset. Used by the drag-to-inherit UI (director drags card A onto card B, A picks up B's shot_id + scene). Logged in the reviews audit trail.
 
+### Duplicate to draft — one-click "new version" (2026-06-11)
+
+```
+POST /api/assets/{id}/duplicate-draft
+  body: {} or {payload: {prompt: "tweaked prompt"}, shot_id?, scene?, workflow?}
+  -> {ok, asset}  // a fresh draft row, status='draft'
+```
+
+Stages a new draft seeded from the source asset: full wrapper payload from its
+draft blob when present (aspect ratio, duration, start/end frames), else
+prompt+refs+model. client/project/shot/scene carry over. Filename auto-bumps
+to the next free `_vN` — repeat calls never collide. `overrides.payload` keys
+merge on top, so a re-roll with a tweaked prompt is ONE call. The drawer's
+"⊕ New version" button is the human entry point to the same endpoint.
+
+### Bulk scene assignment (2026-06-11)
+
+```
+POST /api/assets/bulk-scene
+  body: {asset_ids: [1,2,3], scene: "EP9 Opening"}  // empty scene clears
+```
+
+### New-since filter (2026-06-11)
+
+`GET /api/assets?seen_after=<epoch>` — assets with `first_seen_at >= t`.
+(Complements `updated_after`, which keys on `last_updated_at`.) Powers the
+UI's "✨ +N since HH:MM" chip; agents can use it for "what landed since I
+last checked".
+
 ### Open in Finder/Explorer
 
 ```
