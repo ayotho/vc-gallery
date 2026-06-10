@@ -872,6 +872,13 @@ def _build_where_no_prompt(params: dict) -> tuple[str, list[Any]]:
             values.append(float(v))
         except (ValueError, TypeError):
             pass
+    if params.get("seen_after"):
+        v = params["seen_after"][0] if isinstance(params["seen_after"], list) else params["seen_after"]
+        try:
+            clauses.append("a.first_seen_at >= ?")
+            values.append(float(v))
+        except (ValueError, TypeError):
+            pass
     if not clauses:
         return "", values
     return " WHERE " + " AND ".join(clauses), values
@@ -909,6 +916,13 @@ def _build_where(params: dict) -> tuple[str, list[Any]]:
         v = params["updated_after"][0] if isinstance(params["updated_after"], list) else params["updated_after"]
         try:
             clauses.append("a.last_updated_at >= ?")
+            values.append(float(v))
+        except (ValueError, TypeError):
+            pass
+    if params.get("seen_after"):
+        v = params["seen_after"][0] if isinstance(params["seen_after"], list) else params["seen_after"]
+        try:
+            clauses.append("a.first_seen_at >= ?")
             values.append(float(v))
         except (ValueError, TypeError):
             pass

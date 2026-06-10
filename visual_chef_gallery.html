@@ -317,6 +317,8 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .filter-breadcrumb .fb-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px 3px 10px; background: var(--surface-soft); border: 1px solid var(--hairline); border-radius: var(--r-pill); font-family: var(--mono); font-size: 11px; color: var(--ink); }
 .filter-breadcrumb .fb-chip .fb-x { cursor: pointer; opacity: 0.5; font-size: 10px; padding: 0 2px; }
 .filter-breadcrumb .fb-chip .fb-x:hover { opacity: 1; }
+.filter-breadcrumb .fb-whatsnew { border: 1px solid rgba(109,183,112,.5); background: rgba(109,183,112,.12); color: inherit; border-radius: 20px; padding: 2px 10px; font-size: 11px; cursor: pointer; }
+.filter-breadcrumb .fb-whatsnew:hover { background: rgba(109,183,112,.25); }
 .filter-breadcrumb .fb-clear { font-size: 11px; padding: 3px 10px; border-radius: var(--r-pill); background: transparent; color: #6f6c64; cursor: pointer; border: 1px solid transparent; }
 .filter-breadcrumb .fb-clear:hover { color: var(--ink); border-color: var(--hairline); }
 
@@ -1103,6 +1105,17 @@ select.mp-input { padding-right: 22px; }
 .fire-state.completed { background: #6db770; }
 .fire-state.failed { background: #c25b5b; }
 .fire-state.saved_no_db { background: #d9a957; } /* exit 6 — file saved, scanner heals the DB row */
+.auto-adv { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-soft, #8a877f); cursor: pointer; user-select: none; margin-top: 6px; }
+.auto-adv input { accent-color: #6db770; cursor: pointer; }
+/* Keyboard shortcut overlay (?) */
+.kbd-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 9000; }
+.kbd-overlay.open { display: flex; }
+.kbd-overlay .panel { background: var(--surface, #fff); border-radius: 12px; padding: 22px 28px; max-width: 520px; width: 92%; box-shadow: 0 18px 50px rgba(0,0,0,.3); }
+.kbd-overlay h3 { margin: 0 0 14px; font-size: 14px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft, #8a877f); }
+.kbd-overlay table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.kbd-overlay td { padding: 5px 4px; border-bottom: 1px solid rgba(128,128,128,.12); }
+.kbd-overlay td:first-child { width: 130px; }
+.kbd-overlay .kbd { display: inline-block; padding: 1px 7px; border: 1px solid rgba(128,128,128,.35); border-radius: 5px; font-family: ui-monospace, monospace; font-size: 11px; margin-right: 3px; }
 .fire-info { flex: 1; min-width: 0; }
 .fire-name { font-family: var(--mono); font-size: 11px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fire-meta { font-size: 11px; color: #8a877f; margin-top: 2px; display: flex; gap: 8px; }
@@ -1883,7 +1896,7 @@ const state = {
   folder: null,
   facets: {},
   totalAssets: 0,
-  filters: { status: '', source_type: '', model: '', workflow: '', scene: '', shot_id: '', media_type: '', has_prompt: false, has_sidecar: false, q: '' },
+  filters: { status: '', source_type: '', model: '', workflow: '', scene: '', shot_id: '', media_type: '', has_prompt: false, has_sidecar: false, q: '', seen_after: '' },
   latestOnly: false,
   stackVersions: true,
   sort: loadPref('vc.gallery.sort', 'recent'),
@@ -2389,7 +2402,7 @@ function renderCanvasHead() {
 // Canonical filterable properties for the top hub. Order = popover order.
 // Single value per property today; the popover is structured so a future
 // multi-select (server "is any of") is an additive change, not a rewrite.
-const FILTER_LABELS = { status: 'Status', media_type: 'Media', source_type: 'Source', model: 'Model', workflow: 'Workflow', scene: 'Segment', shot_id: 'Shot' };
+const FILTER_LABELS = { status: 'Status', media_type: 'Media', source_type: 'Source', model: 'Model', workflow: 'Workflow', scene: 'Segment', shot_id: 'Shot', seen_after: 'New since' };
 const FILTER_PROP_ORDER = ['status', 'media_type', 'source_type', 'model', 'workflow', 'scene', 'shot_id'];
 
 function renderFilterBreadcrumb() {
@@ -2401,14 +2414,24 @@ function renderFilterBreadcrumb() {
   // The bar is now ALWAYS shown — it hosts the "+ Filter" + Presets controls
   // even with no active filters (so the top bar is the primary place to ADD).
   el.hidden = false;
+  const fmtVal = (k, v) => k === 'seen_after'
+    ? new Date(Number(v) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : v;
   const chips = active.map(([k, v]) =>
-    `<span class="fb-chip">${LABELS[k] || k}: ${escapeHtml(v)} <span class="fb-x" data-filter="${k}">✕</span></span>`
+    `<span class="fb-chip">${LABELS[k] || k}: ${escapeHtml(fmtVal(k, v))} <span class="fb-x" data-filter="${k}">✕</span></span>`
   ).join('');
+  // "What's new since last visit" chip (roadmap #11) — only when there ARE new
+  // assets and the new-since filter isn't already applied.
+  const nw = state._newSince;
+  const whatsNew = (nw && nw.count > 0 && !f.seen_after)
+    ? `<button class="fb-whatsnew" id="fb-whats-new" data-baseline="${nw.baseline}" title="Show only assets that landed since your last visit">✨ +${nw.count} since ${fmtVal('seen_after', nw.baseline)} · view</button>`
+    : '';
   el.innerHTML =
     `<span class="fb-pop-anchor">
        <button class="fb-add" id="fb-add-btn" title="Add a filter"><span class="fb-plus">+</span> Filter</button>
        <div class="fb-pop" id="fb-add-pop" hidden></div>
      </span>` +
+    whatsNew +
     (active.length ? '<span class="fb-label">Filtered by</span>' : '') +
     chips +
     (active.length > 1 ? '<button class="fb-clear" id="fb-clear-all">Clear all</button>' : '') +
@@ -3128,6 +3151,9 @@ async function fillDrawer(id) {
           <button class="act-btn revise" data-status="revise">↻ Revise <span class="kbd">V</span></button>
           <button class="act-btn reject" data-status="rejected">✕ Reject <span class="kbd">R</span></button>
         </div>
+        <label class="auto-adv" title="Lightroom-style culling: after marking a status, jump straight to the next asset">
+          <input type="checkbox" id="chk-auto-advance"> auto-next
+        </label>
       `}
       <div class="secondary">
         ${asset.hf_url ? `<button id="btn-open-hf" data-url="${escapeHtml(asset.hf_url)}">↗ Open on Higgsfield</button>` : ''}
@@ -3170,10 +3196,23 @@ async function fillDrawer(id) {
   body.querySelectorAll('.act-btn[data-status]').forEach(b => {
     b.addEventListener('click', async () => {
       const target = b.dataset.status;
-      await patchAsset(asset.id, { status: target });
-      flashToast(`Marked ${target}`);
+      const nextId = nextTriageId();
+      try {
+        await patchAsset(asset.id, { status: target });
+        flashToast(`Marked ${target}`);
+        maybeAutoAdvance(nextId);
+      } catch { /* patchAsset already toasts the error */ }
     });
   });
+
+  // Auto-advance toggle (Lightroom culling pattern) — persisted across sessions.
+  const advChk = $('#chk-auto-advance');
+  if (advChk) {
+    advChk.checked = autoAdvanceOn();
+    advChk.addEventListener('change', () => {
+      localStorage.setItem('vc.autoAdvance', advChk.checked ? '1' : '0');
+    });
+  }
 
   // Notes auto-save
   const notesEl = $('#notes');
@@ -3887,6 +3926,7 @@ function buildQuery() {
   if (f.has_prompt) params.set('has_prompt', '1');
   if (f.has_sidecar) params.set('has_sidecar', '1');
   if (f.q) params.set('q', f.q);
+  if (f.seen_after) params.set('seen_after', f.seen_after);
   if (state.latestOnly && !state.stackVersions) params.set('latest_per_shot', '1');
   params.set('sort', state.sort);
   params.set('limit', state.limit);
@@ -5449,6 +5489,54 @@ function bindDrawer() {
   }
 }
 
+// ── Keyboard shortcut overlay (?) — surfaces shortcuts that already exist ──
+function toggleKbdOverlay(force) {
+  let ov = document.getElementById('kbd-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'kbd-overlay';
+    ov.className = 'kbd-overlay';
+    ov.innerHTML = `
+      <div class="panel">
+        <h3>Keyboard shortcuts</h3>
+        <table>
+          <tr><td><span class="kbd">/</span></td><td>Focus search</td></tr>
+          <tr><td><span class="kbd">A</span> <span class="kbd">H</span> <span class="kbd">V</span> <span class="kbd">R</span></td><td>Accept · Hero · Revise · Reject (selected asset / board card)</td></tr>
+          <tr><td><span class="kbd">←</span> <span class="kbd">→</span> or <span class="kbd">J</span> <span class="kbd">K</span></td><td>Previous / next asset in the drawer</td></tr>
+          <tr><td><span class="kbd">Space</span></td><td>Play / pause the drawer video</td></tr>
+          <tr><td><span class="kbd">Enter</span></td><td>Open first asset (nothing selected)</td></tr>
+          <tr><td><span class="kbd">⌘</span><span class="kbd">A</span></td><td>Select all visible cards</td></tr>
+          <tr><td><span class="kbd">⌘</span>-click</td><td>Add card to multi-selection</td></tr>
+          <tr><td><span class="kbd">Esc</span></td><td>Leave field → clear selection → close drawer</td></tr>
+          <tr><td><span class="kbd">?</span></td><td>This overlay</td></tr>
+        </table>
+      </div>`;
+    ov.addEventListener('click', (e) => { if (e.target === ov) ov.classList.remove('open'); });
+    document.body.appendChild(ov);
+  }
+  const want = force !== undefined ? force : !ov.classList.contains('open');
+  ov.classList.toggle('open', want);
+}
+
+// ── Auto-advance triage (Lightroom culling pattern) ──────────────────────
+// Mark a status → jump to the next asset. Default ON; the drawer's
+// "auto-next" checkbox persists the preference in localStorage.
+function autoAdvanceOn() {
+  return localStorage.getItem('vc.autoAdvance') !== '0';
+}
+function nextTriageId() {
+  // Capture the FOLLOWING asset's id BEFORE the patch: if a status filter is
+  // active, patching removes the current item and shifts every index.
+  if (state.selectedIndex < 0) return null;
+  const next = state.items[state.selectedIndex + 1];
+  return next ? next.id : null;
+}
+function maybeAutoAdvance(nextId) {
+  if (!autoAdvanceOn() || !nextId || !state.selectedId) return;
+  if (!state.items.some(a => a.id === nextId)) return;  // vanished mid-flight
+  selectAsset(nextId);
+}
+
 function navigateDrawer(delta) {
   if (state.selectedIndex < 0) return;
   const next = state.selectedIndex + delta;
@@ -5495,10 +5583,17 @@ function bindKeyboard() {
       $('#search').focus();
       return;
     }
+    if (e.key === '?' && !inField) {
+      e.preventDefault();
+      toggleKbdOverlay();
+      return;
+    }
     // Esc: while typing in a field, just leave the field — don't nuke the
     // multi-selection or close the drawer (this capture-phase handler fires
     // before any input-local stopPropagation, so the guard must live here).
     if (e.key === 'Escape') {
+      const kbdOv = document.getElementById('kbd-overlay');
+      if (kbdOv && kbdOv.classList.contains('open')) { toggleKbdOverlay(false); return; }
       if (inField) { ae.blur(); return; }
       if (state.multiSelection.size > 0) { clearMultiSelection(); return; }
       if (state.selectedId) { closeDrawer(); return; }
@@ -5547,8 +5642,9 @@ function bindKeyboard() {
     const map = { a: 'accepted', r: 'rejected', v: 'revise', h: 'hero' };
     if (e.key.toLowerCase() in map) {
       e.preventDefault();
+      const nextId = nextTriageId();
       patchAsset(state.selectedId, { status: map[e.key.toLowerCase()] })
-        .then(() => flashToast(`Marked ${map[e.key.toLowerCase()]}`))
+        .then(() => { flashToast(`Marked ${map[e.key.toLowerCase()]}`); maybeAutoAdvance(nextId); })
         .catch(() => {});  // patchAsset already toasts the error
     }
   };
@@ -6000,6 +6096,12 @@ function navigateLightbox(delta) {
   if (topbarSelectAll) topbarSelectAll.addEventListener('click', selectAllVisible);
   // Filter breadcrumb — click ✕ to clear one filter, or "Clear all" for all
   $('#filter-breadcrumb').addEventListener('click', (e) => {
+    const wn = e.target.closest('#fb-whats-new');
+    if (wn) {
+      state.filters.seen_after = wn.dataset.baseline;
+      refresh();
+      return;
+    }
     const x = e.target.closest('.fb-x');
     if (x) {
       const key = x.dataset.filter;
@@ -6131,6 +6233,31 @@ function navigateLightbox(delta) {
   }
 
   await refresh();
+
+  // "What's new since last visit" (roadmap #11) — baseline is the previous
+  // visit's timestamp, pinned in sessionStorage so mid-session reloads keep
+  // the same chip instead of resetting it. localStorage always records "now"
+  // for the NEXT visit.
+  (async () => {
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      let baseline = sessionStorage.getItem('vc.newSinceBaseline');
+      if (!baseline) {
+        baseline = localStorage.getItem('vc.lastVisitAt') || '';
+        if (baseline) sessionStorage.setItem('vc.newSinceBaseline', baseline);
+      }
+      localStorage.setItem('vc.lastVisitAt', String(now));
+      if (!baseline) return;
+      const r = await fetch(`/api/assets?seen_after=${baseline}&limit=1`);
+      if (!r.ok) return;
+      const d = await r.json();
+      const count = d.total || 0;
+      if (count > 0) {
+        state._newSince = { count, baseline };
+        renderFilterBreadcrumb();
+      }
+    } catch { /* chip is best-effort — never block boot */ }
+  })();
 
   // Live auto-refresh: chain polls via setTimeout so a slow poll can't stack
   // up overlapping calls (the old setInterval(5000) would queue duplicate
