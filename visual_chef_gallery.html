@@ -394,6 +394,8 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .multi-select-bar .ms-clear { font-size: 12px; padding: 5px 12px; border-radius: var(--r-pill); background: var(--ink); color: var(--on-primary); cursor: pointer; }
 .multi-select-bar .ms-clear:hover { opacity: 0.92; }
 .multi-select-bar .ms-act.compare { background: var(--surface-soft); border-color: var(--accent-magenta, #d97757); color: var(--accent-magenta, #d97757); font-weight: 600; }
+.multi-select-bar .ms-segment { font-size: 11.5px; font-family: var(--sans); font-weight: 500; padding: 4px 8px; border-radius: var(--r-pill); cursor: pointer; border: 1px solid var(--hairline); background: var(--canvas); color: var(--ink); max-width: 190px; }
+.multi-select-bar .ms-segment:hover { border-color: var(--ink); }
 
 /* ── Review Board (Kanban) ─────────────────────────────────────────────
    Additive view. Horizontal lanes of status columns; each lane scrolls
@@ -1586,6 +1588,7 @@ select.mp-input { padding-right: 22px; }
           <button class="ms-act revise" data-status="revise">↻ Revise</button>
           <button class="ms-act reject" data-status="rejected">✕ Reject</button>
         </span>
+        <select class="ms-segment" id="ms-segment" title="Assign a segment to all selected cards"></select>
         <button class="ms-act compare" id="ms-compare" title="Compare selected cards side by side">⊞ Compare</button>
         <span class="ms-hint">Cmd-click to add · Shift-click for range</span>
         <button class="ms-clear" id="ms-clear">Clear</button>
@@ -2331,6 +2334,10 @@ function groupByShot(items) {
 
 function renderGrid(append = false) {
   const root = $('#grid-root');
+  // Same rubber-band drag-select as the board. #grid-root is persistent and
+  // wireBoardMarquee self-guards against double-binding, so this is a no-op
+  // after the first render.
+  wireBoardMarquee(root);
   if (!append) root.innerHTML = '';
   if (state.items.length === 0 && !state.loading) {
     root.innerHTML = `<div class="empty"><h3>Nothing matches yet</h3>No assets fit those filters. Try clearing one.</div>`;
@@ -2705,9 +2712,25 @@ function renderMultiSelectChrome() {
     const loadedItems = (state._renderItems || state.items).length;
     const suffix = (state.items.length < state.total) ? ` (of ${loadedItems} loaded)` : '';
     bar.querySelector('.ms-count').textContent = `${count} selected${suffix}`;
+    renderMsSegmentOptions();
   } else {
     bar.hidden = true;
   }
+}
+
+// Rebuild the multi-select bar's segment dropdown. Options = facet scenes ∪
+// scenes on loaded grid/board items, so a segment created moments ago (before
+// facets refresh) is still offered. "＋ New segment…" prompts for a name.
+function renderMsSegmentOptions() {
+  const sel = $('#ms-segment');
+  if (!sel) return;
+  const scenes = new Set(Object.keys(state.facets.scene || {}));
+  (state.items || []).forEach(a => { if (a.scene) scenes.add(a.scene); });
+  (state.boardItems || []).forEach(a => { if (a.scene) scenes.add(a.scene); });
+  sel.innerHTML = ['<option value="">→ Segment…</option>']
+    .concat([...scenes].sort().map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`))
+    .concat(['<option value="__new__">＋ New segment…</option>'])
+    .join('');
 }
 
 // -------- Drawer ------------------------------------------------------
@@ -4763,9 +4786,10 @@ async function boardHotkeyAct(status) {
 }
 
 // ── Marquee multi-select ──────────────────────────────────────────────
-// Rubber-band selection that initiates ONLY on the empty board/column
-// background (never on a card — cards are draggable=true for column DnD, so
-// the two trigger surfaces are mutually exclusive). Feeds state.multiSelection.
+// Rubber-band selection on the board AND the grid. Initiates ONLY on the
+// empty container background (never on a card — cards are draggable=true for
+// column DnD / drag-to-inherit, so the two trigger surfaces are mutually
+// exclusive). Scoped to whichever root it's wired on; feeds state.multiSelection.
 function wireBoardMarquee(root) {
   // #board-root is a persistent node — renderKanban only swaps its innerHTML,
   // never the element itself. Bind the mousedown ONCE so re-renders (view
@@ -4811,7 +4835,7 @@ function wireBoardMarquee(root) {
         return;
       }
       const rect = box.getBoundingClientRect();
-      $$('#board-root .board-col-list .card').forEach(card => {
+      root.querySelectorAll('.card').forEach(card => {
         const r = card.getBoundingClientRect();
         const intersects = !(r.right < rect.left || r.left > rect.right || r.bottom < rect.top || r.top > rect.bottom);
         if (intersects) {
@@ -6021,6 +6045,46 @@ function navigateLightbox(delta) {
       }
     });
   });
+  // Bulk segment assign on multi-select bar — pick a segment (or create one)
+  // and every selected card gets it in a single call.
+  const msSegment = $('#ms-segment');
+  if (msSegment) {
+    msSegment.addEventListener('change', async () => {
+      let scene = msSegment.value;
+      if (!scene) return; // placeholder
+      if (scene === '__new__') {
+        scene = (prompt('New segment name:') || '').trim();
+        if (!scene) { msSegment.value = ''; return; }
+      }
+      const selectedIds = Array.from(state.multiSelection);
+      if (!selectedIds.length) { msSegment.value = ''; return; }
+      // Expand any cover-card IDs to include all stack member IDs
+      const renderItems = state._renderItems || state.items;
+      const expandedIds = new Set();
+      selectedIds.forEach(sid => {
+        const cover = renderItems.find(x => x.id === sid);
+        if (cover && cover._stack && cover._stack.members) {
+          cover._stack.members.forEach(m => expandedIds.add(m.id));
+        } else {
+          expandedIds.add(sid);
+        }
+      });
+      try {
+        const res = await api('/api/assets/bulk-scene', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ asset_ids: Array.from(expandedIds), scene }),
+        });
+        flashToast(`${res.changed} asset${res.changed !== 1 ? 's' : ''} → segment "${scene}"`, 'ok');
+        clearMultiSelection();
+        refresh();
+      } catch (e) {
+        flashToast('Segment assign failed: ' + e.message, 'error');
+      }
+      msSegment.value = '';
+    });
+  }
+
   // Stack versions toggle — group assets by shot_id into stacked cover cards
   const chkLatest = $('#chk-latest-only');
   if (chkLatest) {

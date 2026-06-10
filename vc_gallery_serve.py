@@ -14,6 +14,7 @@ Endpoints:
                                      limit, offset)
     GET  /api/assets/<id>         → single asset + prompt + review history
     PATCH /api/assets/<id>        → update status, notes, shot_id, scene, tags
+    POST /api/assets/bulk-scene   → assign one segment (scene) to many assets
     POST /api/assets/<id>/reviews → log a review event
     POST /api/assets/<id>/open    → reveal asset in Finder (macOS)
     GET  /thumb/<sha>.jpg         → serve thumbnail (generate if missing)
@@ -1736,6 +1737,42 @@ def _bulk_status_change(payload: dict) -> dict:
     return {"ok": True, "changed": len(changed), "skipped": len(skipped), "changed_ids": changed}
 
 
+def _bulk_scene_change(payload: dict) -> dict:
+    """Assign the same segment (scene) to multiple assets in one call.
+    Body: {asset_ids: [1,2,3], scene: "EP9 Opening"}
+
+    Mirrors _bulk_status_change's batch shape: one SELECT for current values,
+    one UPDATE for the rows that actually change. Empty scene clears the field.
+    """
+    ids = payload.get("asset_ids", [])
+    if not isinstance(ids, list) or not ids:
+        return {"ok": False, "error": "asset_ids must be a non-empty list"}
+    if "scene" not in payload:
+        return {"ok": False, "error": "missing 'scene'"}
+    scene = str(payload.get("scene") or "").strip()
+    conn = STATE.conn()
+
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"SELECT id, scene FROM assets WHERE id IN ({placeholders})", ids
+    ).fetchall()
+    current_map = {r["id"]: (r["scene"] or "") for r in rows}
+
+    changed = [aid for aid in ids if aid in current_map and current_map[aid] != scene]
+    skipped = [aid for aid in ids if aid not in current_map or current_map[aid] == scene]
+
+    if changed:
+        change_placeholders = ",".join("?" * len(changed))
+        conn.execute(
+            f"UPDATE assets SET scene = ?, last_updated_at = strftime('%s','now') WHERE id IN ({change_placeholders})",
+            [scene or None] + changed,
+        )
+        conn.commit()
+        _audit("bulk.scene_change", {"scene": scene, "changed": changed, "skipped": skipped})
+        STATE.mark_changed()
+    return {"ok": True, "changed": len(changed), "skipped": len(skipped), "changed_ids": changed, "scene": scene}
+
+
 def _open_in_finder(asset_id: int) -> tuple[bool, str]:
     """Return (ok, reason). Reason is empty on success, human-readable on failure.
     Previously returned a bool that was 'true' whenever subprocess.Popen
@@ -2448,20 +2485,30 @@ def _fire_draft(asset_id: int) -> dict:
     return {"ok": True, "pid": proc.pid, "payload_file": tmp_path, "engine": engine}
 
 
-def _scene_overview() -> dict:
+def _scene_overview(media_type: str | None = None) -> dict:
     """Scene-grouped overview showing hero/accepted/alternate counts per scene,
     plus the assets themselves grouped by status. (#31 — scene workspace.)
+
+    media_type — optional 'image'/'video' filter so the Segments view honours
+    the same media filter as the grid.
 
     Returns {scenes: [{scene, hero: [...], accepted: [...], alternate: [...],
     counts: {hero, accepted, alternate, review, total}}], unassigned_count: N}
     """
     conn = STATE.conn()
+    media_clause = ""
+    media_args: tuple = ()
+    if media_type in ("image", "video"):
+        media_clause = "AND a.media_type = ? "
+        media_args = (media_type,)
     # Get all scenes with their keeper assets in one query
     rows = conn.execute(
         "SELECT a.* FROM assets a "
         "WHERE a.scene IS NOT NULL AND a.scene != '' "
         "AND a.status IN ('hero', 'accepted', 'alternate', 'revise', 'review', 'firing') "
-        "ORDER BY a.scene, a.status, a.shot_id, a.first_seen_at DESC"
+        + media_clause +
+        "ORDER BY a.scene, a.status, a.shot_id, a.first_seen_at DESC",
+        media_args,
     ).fetchall()
 
     # Group by scene
@@ -2495,7 +2542,9 @@ def _scene_overview() -> dict:
     # Count assets with no scene assigned
     unassigned = conn.execute(
         "SELECT count(*) FROM assets WHERE (scene IS NULL OR scene = '') "
-        "AND status NOT IN ('draft', 'rejected', 'legacy')"
+        "AND status NOT IN ('draft', 'rejected', 'legacy') "
+        + media_clause.replace("a.media_type", "media_type"),
+        media_args,
     ).fetchone()[0]
 
     return {
@@ -2783,7 +2832,8 @@ class Handler(BaseHTTPRequestHandler):
             if STATE.folder is None:
                 self._send_error_json(409, "no working folder set")
                 return
-            self._send_json(200, _scene_overview())
+            media_type = (params.get("media_type", [""])[0] or None)
+            self._send_json(200, _scene_overview(media_type))
             return
         if path == "/api/facets":
             if STATE.folder is None:
@@ -3020,6 +3070,17 @@ class Handler(BaseHTTPRequestHandler):
                 return
             payload = self._read_json_body()
             result = _bulk_status_change(payload)
+            status = 200 if result.get("ok") else 400
+            self._send_json(status, result)
+            return
+
+        # POST /api/assets/bulk-scene — assign one segment to multiple assets
+        if path == "/api/assets/bulk-scene":
+            if STATE.folder is None:
+                self._send_error_json(409, "no working folder set")
+                return
+            payload = self._read_json_body()
+            result = _bulk_scene_change(payload)
             status = 200 if result.get("ok") else 400
             self._send_json(status, result)
             return

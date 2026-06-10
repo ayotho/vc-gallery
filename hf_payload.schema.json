@@ -92,6 +92,13 @@
       "default": 180,
       "description": "Override wrapper default (180s for image, 600s recommended for video)"
     },
+    "submit_timeout_seconds": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 1800,
+      "default": 300,
+      "description": "Override wrapper submit timeout for `higgsfield generate create`. Use when refs/uploads or platform queueing take longer than the default before returning a job id."
+    },
     "skip_sidecar": {
       "type": "boolean",
       "default": false,

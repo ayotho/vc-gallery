@@ -54,6 +54,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -97,6 +98,7 @@ EXIT_TO_CLASS = {
 }
 
 DEFAULT_WAIT_TIMEOUT_SECONDS = 600  # 10 min — covers Seedance/Kling/Veo video gens; image gens still finish in <2 min
+DEFAULT_SUBMIT_TIMEOUT_SECONDS = 300  # Higgsfield create can stall on upload/queue before returning a job id
 SUBPROCESS_TIMEOUT_BUFFER = 30  # extra seconds for CLI graceful exit after its --timeout fires
 
 
@@ -260,11 +262,23 @@ def _release_placeholder(target: Path) -> None:
         pass
 
 
+def _higgsfield_binary() -> str:
+    """Return the Higgsfield CLI path even when GUI-launched subprocesses have
+    a minimal PATH that omits ~/.local/bin."""
+    found = shutil.which("higgsfield")
+    if found:
+        return found
+    fallback = Path.home() / ".local" / "bin" / "higgsfield"
+    if fallback.exists():
+        return str(fallback)
+    return "higgsfield"
+
+
 def _run_higgsfield(args: list[str], timeout: int = 300) -> tuple[int, str, str]:
     """Run higgsfield CLI. Returns (returncode, stdout, stderr)."""
     try:
         proc = subprocess.run(
-            ["higgsfield", *args],
+            [_higgsfield_binary(), *args],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -533,6 +547,7 @@ def run(payload: dict, dry_run: bool = False, gallery_root: Optional[str] = None
     filename = payload["filename"]
     target = gallery / filename  # primary target for early ledger emission
     timeout = payload.get("wait_timeout_seconds", DEFAULT_WAIT_TIMEOUT_SECONDS)
+    submit_timeout = payload.get("submit_timeout_seconds", DEFAULT_SUBMIT_TIMEOUT_SECONDS)
     requested_count = max(1, int(payload.get("count", 1)))
 
     # Helper for intermediate stdout prints (dry-run plan, count_mismatch warnings).
@@ -584,6 +599,7 @@ def run(payload: dict, dry_run: bool = False, gallery_root: Optional[str] = None
         argv = _build_create_argv(payload)
         _say(f"[dry-run] target: {target}")
         _say(f"[dry-run] argv:   higgsfield {' '.join(argv)}")
+        _say(f"[dry-run] submit timeout: {submit_timeout}s")
         _say(f"[dry-run] timeout: {timeout}s")
         if requested_count > 1:
             planned = [_split_filename(filename, i, requested_count) for i in range(requested_count)]
@@ -618,7 +634,7 @@ def run(payload: dict, dry_run: bool = False, gallery_root: Optional[str] = None
 
     # ─── 3. Submit (no --wait) ───
     create_argv = _build_create_argv(payload)
-    rc, out, err = _run_higgsfield(create_argv, timeout=60)
+    rc, out, err = _run_higgsfield(create_argv, timeout=submit_timeout)
 
     if _detect_auth_error(err):
         for t in reserved_targets:

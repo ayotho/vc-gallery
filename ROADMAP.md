@@ -4,6 +4,8 @@ The plan, phased. Each item below maps to a GitHub issue + milestone — `gh iss
 
 **Guiding principle:** the AI agents (image-chef, video-chef) do most of the volume work. Features serve the agent first, the director second. Same plumbing, two consumers.
 
+**Positioning (tie-breaker for new ideas):** see [POSITIONING.md](POSITIONING.md) — vc-gallery is engine-agnostic mission control (PLAN / REVIEW / DELIVER). Generation is a thin, swappable plug, not the product.
+
 ---
 
 ## v0.3 — Obsidian Bridge MVP

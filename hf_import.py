@@ -41,6 +41,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -58,6 +59,17 @@ import vc_gallery_lib as lib  # noqa: E402
 JOB_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
+def higgsfield_binary() -> str:
+    """Resolve the Higgsfield CLI even when GUI-launched shells miss ~/.local/bin."""
+    found = shutil.which("higgsfield")
+    if found:
+        return found
+    fallback = Path.home() / ".local" / "bin" / "higgsfield"
+    if fallback.exists():
+        return str(fallback)
+    return "higgsfield"
+
+
 def extract_job_id(arg: str) -> Optional[str]:
     """Pull a UUID out of an HF asset URL or accept a raw UUID."""
     m = JOB_ID_RE.search(arg)
@@ -68,7 +80,7 @@ def hf_get_job(job_id: str) -> dict:
     """Call `higgsfield --json generate get <id>` and return parsed JSON."""
     try:
         proc = subprocess.run(
-            ["higgsfield", "--json", "generate", "get", job_id],
+            [higgsfield_binary(), "--json", "generate", "get", job_id],
             capture_output=True, text=True, timeout=30,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
