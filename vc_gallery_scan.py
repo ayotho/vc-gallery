@@ -183,6 +183,45 @@ def _iter_media_files(source: Path, recurse: bool):
         yield p
 
 
+# A live fire holds its 0-byte placeholder for at most wait_timeout (≤30 min
+# in practice). Anything older is a leaked reservation from a failed/abandoned
+# fire — wait-failures intentionally keep the placeholder for manual recovery,
+# but nothing reaped them afterwards (issues #108/#109 symptom: stale 0-byte
+# files block refires and trip /api/health forever).
+STALE_PLACEHOLDER_AGE_SEC = 2 * 3600
+
+
+def _reap_stale_placeholders(source: Path, recurse: bool, log_target: Path) -> int:
+    """Unlink 0-byte placeholder media files older than STALE_PLACEHOLDER_AGE_SEC.
+
+    Runs at the start of every scan, so the periodic rescan keeps the gallery
+    free of leaked reservations without anyone remembering vc_gallery_cleanup.
+    Recent placeholders (in-flight fires) are left alone.
+    """
+    reaped = 0
+    now = time.time()
+    iterator = source.rglob("*") if recurse else source.iterdir()
+    for p in iterator:
+        try:
+            if not p.is_file() or p.suffix.lower() not in lib.MEDIA_EXTS:
+                continue
+            st = p.stat()
+            if st.st_size != 0:
+                continue
+            age = now - st.st_mtime
+            if age < STALE_PLACEHOLDER_AGE_SEC:
+                continue
+            p.unlink()
+        except OSError:
+            continue
+        reaped += 1
+        obs_mod.record_event(
+            log_target, "scan.placeholder_reaped", source="scan",
+            filename=p.name, file_path=str(p), age_seconds=round(age, 1),
+        )
+    return reaped
+
+
 def _pair_sidecar(media: Path) -> Path | None:
     """Return the sidecar path if a `<stem>.md` exists next to the media."""
     candidate = media.with_suffix(".md")
@@ -675,6 +714,8 @@ def scan(
 
     conn = lib.connect(db_path)
     log_target = log_path or (db_path.parent / "visual_chef.jsonl")
+
+    counts["reaped"] = _reap_stale_placeholders(source, recurse, log_target)
 
     try:
         conn.execute("BEGIN")
