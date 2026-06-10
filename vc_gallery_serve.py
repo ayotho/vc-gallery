@@ -2033,6 +2033,101 @@ def _engine_for_payload(payload: dict) -> str:
 _DRAFT_CREATE_LOCK = threading.Lock()
 
 
+def _next_version_filename(conn, gallery: Path, filename: str) -> str:
+    """Bump the `_vN` version token in a filename to the next free slot.
+
+    `hf_SH010_hero_v3.png` → `hf_SH010_hero_v4.png` (or v5… if v4 is taken).
+    Filenames without a version token get `_v2` appended before the suffix.
+    Free = no assets row claims the name AND nothing on disk uses it.
+    """
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    m = re.search(r"^(.*_v)(\d+)(.*)$", stem)
+    if m:
+        base, n, tail = m.group(1), int(m.group(2)), m.group(3)
+    else:
+        base, n, tail = stem + "_v", 1, ""
+    for i in range(n + 1, n + 200):
+        cand = f"{base}{i}{tail}{suffix}"
+        row = conn.execute(
+            "SELECT 1 FROM assets WHERE filename = ? LIMIT 1", (cand,)
+        ).fetchone()
+        if row is None and not (gallery / cand).exists():
+            return cand
+    raise ValueError(f"no free version slot found for {filename}")
+
+
+def _duplicate_to_draft(asset_id: int, overrides: dict | None = None) -> dict:
+    """One-click 'new version' — stage a fresh draft seeded from an existing
+    asset's prompt, refs, and model (roadmap #8; the Lightroom virtual-copy /
+    Frame.io new-version pattern).
+
+    Seeds from the source asset's draft payload blob when it has one (fired
+    drafts keep their full wrapper payload in notes), otherwise reconstructs
+    a minimal payload from the prompts table. `overrides.payload` keys merge
+    on top (e.g. {"payload": {"prompt": "..."}} to tweak before staging).
+    Filename is auto-bumped to the next free _vN.
+    """
+    overrides = overrides or {}
+    conn = STATE.conn()
+    src = _get_asset(asset_id)
+    if src is None:
+        return {"ok": False, "error": "asset not found"}
+    gallery = STATE.folder
+    if gallery is None:
+        return {"ok": False, "error": "no working folder set"}
+
+    # Prefer the full wrapper payload preserved in the notes blob. _get_asset
+    # rewrites asset["notes"] to the user-facing string, so read the raw
+    # column directly.
+    inner: dict = {}
+    notes_row = conn.execute(
+        "SELECT notes FROM assets WHERE id = ?", (asset_id,)
+    ).fetchone()
+    raw_notes = (notes_row["notes"] if notes_row else "") or ""
+    try:
+        blob = json.loads(raw_notes) if raw_notes else {}
+        if isinstance(blob, dict) and isinstance(blob.get("payload"), dict):
+            inner = dict(blob["payload"])
+    except json.JSONDecodeError:
+        pass
+    if not inner.get("prompt"):
+        inner["prompt"] = src.get("prompt") or ""
+    if not inner.get("model") and src.get("model"):
+        inner["model"] = src["model"]
+    if not inner.get("image") and src.get("refs"):
+        inner["image"] = list(src["refs"])
+    inner.pop("gallery", None)  # _create_draft re-canonicalises
+    if isinstance(overrides.get("payload"), dict):
+        inner.update(overrides["payload"])
+    if not inner.get("prompt"):
+        return {"ok": False, "error": "source asset has no prompt to seed from"}
+
+    try:
+        new_filename = _next_version_filename(conn, gallery, src["filename"])
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
+    envelope = {
+        "filename": new_filename,
+        "payload": inner,
+        "client": overrides.get("client", src.get("client")),
+        "project": overrides.get("project", src.get("project")),
+        "shot_id": overrides.get("shot_id", src.get("shot_id")),
+        "scene": overrides.get("scene", src.get("scene")),
+        "model": inner.get("model") or src.get("model"),
+        "workflow": overrides.get("workflow", src.get("workflow")),
+    }
+    result = _create_draft(envelope)
+    if result.get("ok"):
+        _audit("draft.duplicated_from", {
+            "source_asset_id": asset_id,
+            "new_asset_id": result["asset"]["id"],
+            "filename": new_filename,
+        })
+    return result
+
+
 def _create_draft(payload: dict) -> dict:
     """Stage a draft asset row.
 
@@ -3062,6 +3157,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_error_json(404, "asset not found")
                 return
             self._send_json(200, result)
+            return
+
+        m = re.match(r"^/api/assets/(\d+)/duplicate-draft$", path)
+        if m:
+            if STATE.folder is None:
+                self._send_error_json(409, "no working folder set")
+                return
+            overrides = self._read_json_body()
+            result = _duplicate_to_draft(int(m.group(1)), overrides)
+            status = 200 if result.get("ok") else 400
+            self._send_json(status, result)
             return
 
         m = re.match(r"^/api/assets/(\d+)/open$", path)

@@ -3135,7 +3135,7 @@ async function fillDrawer(id) {
         ${asset.has_sidecar ? '<button id="btn-open-sidecar">📄 Sidecar</button>' : ''}
         ${asset.prompt ? '<button id="btn-copy-prompt">⎘ Copy prompt</button>' : ''}
         ${asset.file_path ? `<button id="btn-copy-path">⎘ Copy path</button>` : ''}
-        ${!isDraft ? `<button id="btn-dupe-draft">⊕ Variant draft</button>` : ''}
+        ${!isDraft ? `<button id="btn-dupe-draft" title="Stage a new draft seeded with this asset's prompt, refs and settings — filename auto-bumps to the next version">⊕ New version</button>` : ''}
       </div>
     </div>
   `;
@@ -3379,32 +3379,25 @@ async function fillDrawer(id) {
   // Duplicate as variant draft
   const dupeBtn = $('#btn-dupe-draft');
   if (dupeBtn) {
+    // Server-side duplicate (roadmap #8 — Lightroom virtual-copy pattern).
+    // The server seeds from the source's FULL wrapper payload (aspect ratio,
+    // duration, start/end frames — not just prompt+refs), carries client/
+    // project, and bumps the filename to the next free _vN, so repeat clicks
+    // never collide. The old client-side `_variant` name did all of that wrong.
     dupeBtn.addEventListener('click', async () => {
       try {
-        const stem = (asset.filename || 'untitled').replace(/\.[^.]+$/, '');
-        const ext = (asset.filename || '').includes('.') ? '.' + asset.filename.split('.').pop() : '.mp4';
-        const newName = `${stem}_variant${ext}`;
-        const draftPayload = {
-          filename: newName,
-          shot_id: asset.shot_id || '',
-          scene: asset.scene || '',
-          model: asset.model || '',
-          workflow: asset.workflow || '',
-          payload: {
-            model: asset.model || '',
-            prompt: asset.prompt || '',
-            image: (asset.refs && asset.refs.length > 0) ? asset.refs : (asset.file_path ? [asset.file_path] : []),
-          },
-        };
-        const res = await api('/api/draft', {
+        const res = await api(`/api/assets/${asset.id}/duplicate-draft`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(draftPayload),
+          body: JSON.stringify({}),
         });
-        flashToast(`Draft created: #${res.asset.id}`, 'ok');
-        refresh();
+        flashToast(`New version staged: ${res.asset.filename}`, 'ok');
+        await refresh();
+        // Land in the fresh draft so the next move (tweak prompt → fire) is
+        // already on screen.
+        selectAsset(res.asset.id);
       } catch (e) {
-        flashToast('Duplicate failed: ' + e.message, 'error');
+        flashToast('New version failed: ' + e.message, 'error');
       }
     });
   }
