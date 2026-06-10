@@ -1102,6 +1102,7 @@ select.mp-input { padding-right: 22px; }
 .fire-state.running { background: #d97757; animation: pulse 1.4s ease-in-out infinite; }
 .fire-state.completed { background: #6db770; }
 .fire-state.failed { background: #c25b5b; }
+.fire-state.saved_no_db { background: #d9a957; } /* exit 6 — file saved, scanner heals the DB row */
 .fire-info { flex: 1; min-width: 0; }
 .fire-name { font-family: var(--mono); font-size: 11px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fire-meta { font-size: 11px; color: #8a877f; margin-top: 2px; display: flex; gap: 8px; }
@@ -2234,8 +2235,10 @@ function cardEl(asset, idx) {
     b.addEventListener('click', async (e) => {
       e.stopPropagation();
       const target = b.dataset.q;
-      await patchAsset(asset.id, { status: target });
-      flashToast(`Marked ${target} · ${asset.filename}`);
+      try {
+        await patchAsset(asset.id, { status: target });
+        flashToast(`Marked ${target} · ${asset.filename}`);
+      } catch { /* patchAsset already toasts the error */ }
     });
   });
   // Card ID chip — click to copy asset ID
@@ -4993,8 +4996,10 @@ async function openCompare(ids) {
       e.stopPropagation();
       const aid = Number(btn.dataset.id);
       const target = btn.dataset.q;
-      await patchAsset(aid, { status: target });
-      flashToast(`Marked ${target}`);
+      try {
+        await patchAsset(aid, { status: target });
+        flashToast(`Marked ${target}`);
+      } catch { return; /* patchAsset already toasts the error */ }
       // Refresh compare view
       openCompare(ids);
     });
@@ -5497,8 +5502,11 @@ function bindKeyboard() {
       $('#search').focus();
       return;
     }
-    // Esc: clear multi-selection first (if active), else close the drawer.
+    // Esc: while typing in a field, just leave the field — don't nuke the
+    // multi-selection or close the drawer (this capture-phase handler fires
+    // before any input-local stopPropagation, so the guard must live here).
     if (e.key === 'Escape') {
+      if (inField) { ae.blur(); return; }
       if (state.multiSelection.size > 0) { clearMultiSelection(); return; }
       if (state.selectedId) { closeDrawer(); return; }
     }
@@ -5547,7 +5555,8 @@ function bindKeyboard() {
     if (e.key.toLowerCase() in map) {
       e.preventDefault();
       patchAsset(state.selectedId, { status: map[e.key.toLowerCase()] })
-        .then(() => flashToast(`Marked ${map[e.key.toLowerCase()]}`));
+        .then(() => flashToast(`Marked ${map[e.key.toLowerCase()]}`))
+        .catch(() => {});  // patchAsset already toasts the error
     }
   };
   document.addEventListener('keydown', handler, true);  // capture phase

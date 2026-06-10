@@ -286,9 +286,16 @@ class State:
                 # Build a safe dict (drop the proc handle)
                 row = {k: v for k, v in info.items() if k != "proc"}
                 row["pid"] = pid
+                # Exit 6 (EXIT_SIDECAR) = image landed on disk but the wrapper's
+                # DB/sidecar write failed; scanner adoption heals the row within
+                # seconds. Red "failed" dots for successful gens eroded trust in
+                # the panel (#111) — surface as a distinct amber state instead.
+                _rc = info.get("exit_code")
                 row["state"] = (
-                    "running" if info.get("exit_code") is None
-                    else ("completed" if info.get("exit_code") == 0 else "failed")
+                    "running" if _rc is None
+                    else "completed" if _rc == 0
+                    else "saved_no_db" if _rc == 6
+                    else "failed"
                 )
                 row["duration_s"] = round((info.get("finished_at") or now) - info["started_at"], 1)
                 out.append(row)
@@ -613,7 +620,8 @@ class State:
         if self._conn is None:
             return 0
         try:
-            return self._conn.execute("SELECT count(*) FROM assets").fetchone()[0]
+            row = self._conn.execute("SELECT count(*) FROM assets").fetchone()
+            return row[0] if row else 0
         except sqlite3.DatabaseError:
             return 0
 
@@ -2082,6 +2090,38 @@ def _create_draft(payload: dict) -> dict:
     if gallery is None:
         return {"ok": False, "error": "no working folder set"}
     file_path = _draft_filepath(gallery, filename)
+
+    # Refire-over-failed (#108): a prior attempt with the same filename whose
+    # fire failed (row demoted back to 'draft', or director-rejected) blocks
+    # re-staging via UNIQUE(assets.file_path), forcing pointless version bumps
+    # (v4, v5, v6...). If the colliding row never produced a real media file
+    # on disk, delete it (prompts/reviews cascade) and let the fresh draft
+    # take its name. Rows with a real file, or in any other status, still
+    # collide loudly with a readable error instead of a raw sqlite message.
+    real_target = gallery / filename
+    collisions = conn.execute(
+        "SELECT id, status, file_path FROM assets WHERE file_path IN (?, ?)",
+        (file_path, str(real_target)),
+    ).fetchall()
+    for c in collisions:
+        try:
+            has_real_bytes = real_target.exists() and real_target.stat().st_size > 0
+        except OSError:
+            has_real_bytes = True  # can't verify — be conservative, refuse replace
+        replaceable = c["status"] in ("draft", "rejected") and not has_real_bytes
+        if not replaceable:
+            return {
+                "ok": False,
+                "error": (
+                    f"filename '{filename}' already in use by asset {c['id']} "
+                    f"(status '{c['status']}') — pick a new version suffix"
+                ),
+            }
+        conn.execute("DELETE FROM assets WHERE id = ?", (c["id"],))
+        _audit("draft.replaced_stale", {
+            "old_asset_id": c["id"], "old_status": c["status"], "filename": filename,
+        })
+
     now = time.time()
     # Canonicalise gallery in the payload — always replace with the absolute
     # path from STATE.folder so the wrapper can't use a relative path later.

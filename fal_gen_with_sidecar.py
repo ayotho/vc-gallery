@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -314,6 +315,9 @@ def run(payload: dict, dry_run: bool = False, quiet: bool = False) -> int:
     planned = [_split_filename(filename, i, requested_count) for i in range(requested_count)]
     emit("prepared", endpoint=model, requested_count=requested_count)
 
+    def _on_subscribe_timeout(_signum, _frame):
+        raise TimeoutError("fal subscribe watchdog fired — queue/websocket stalled")
+
     def on_queue_update(update):
         if quiet:
             return
@@ -338,9 +342,19 @@ def run(payload: dict, dry_run: bool = False, quiet: bool = False) -> int:
 
         request_id = ""
         try:
-            result = fal_client.subscribe(
-                model, arguments=args, with_logs=True, on_queue_update=on_queue_update,
-            )
+            # Watchdog (2026-06-11): fal_client.subscribe() has NO timeout and
+            # can block forever on a stalled queue/websocket — two wrappers from
+            # 06-06 were found still alive on 06-10. SIGALRM turns a hang into
+            # a normal failed_submit so the process always terminates.
+            wait_timeout = int(payload.get("wait_timeout_seconds", 900) or 900)
+            signal.signal(signal.SIGALRM, _on_subscribe_timeout)
+            signal.alarm(wait_timeout)
+            try:
+                result = fal_client.subscribe(
+                    model, arguments=args, with_logs=True, on_queue_update=on_queue_update,
+                )
+            finally:
+                signal.alarm(0)
             if isinstance(result, dict):
                 request_id = str(result.get("request_id") or result.get("id") or "")
             result_url = _extract_video_url(result)
