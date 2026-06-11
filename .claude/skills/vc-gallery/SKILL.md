@@ -125,6 +125,15 @@ to the next free `_vN` — repeat calls never collide. `overrides.payload` keys
 merge on top, so a re-roll with a tweaked prompt is ONE call. The drawer's
 "⊕ New version" button is the human entry point to the same endpoint.
 
+### Stage + fire in one call (2026-06-12)
+
+`POST /api/draft` accepts `"fire": true` in the envelope — the draft is
+staged and fired in the same request. Response gains a `fire` key
+(`{ok, pid, ...}`) and `asset.status` comes back `firing`. A failed fire
+does NOT roll back the draft; it stays staged for fix-and-refire. This is
+the fast path for live direction — use it whenever the director has already
+approved the prompt (skip the separate `/api/draft/{id}/fire` round-trip).
+
 ### Hero export — editor handoff (2026-06-12)
 
 ```

@@ -3506,6 +3506,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             payload = self._read_json_body()
             result = _create_draft(payload)
+            # #107 (mined problem #2: 'needs to be quicker… this took a bit
+            # too long' under live direction): `fire: true` collapses
+            # stage→fire into ONE call. A failed fire does NOT roll back the
+            # draft — it stays staged so the caller can fix and refire.
+            if result.get("ok") and payload.get("fire"):
+                result["fire"] = _fire_draft(result["asset"]["id"])
+                result["asset"] = _get_asset(result["asset"]["id"]) or result["asset"]
             status = 200 if result.get("ok") else 400
             self._send_json(status, result)
             return
