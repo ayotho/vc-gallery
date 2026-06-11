@@ -2244,6 +2244,112 @@ def _duplicate_to_draft(asset_id: int, overrides: dict | None = None) -> dict:
     return result
 
 
+
+def _capture_frame(asset_id: int, payload: dict) -> dict:
+    """Mint an image asset from a frame of a video asset (#1 mined problem,
+    2026-06-12 — the director's chain-shot workflow: end frame of clip N
+    becomes the start frame / edit base for clip N+1).
+
+    Body: {"t": 3.04} | {"t": "end"} | {"t": "start"}  (default "end")
+    The PNG lands next to the source video in the gallery, gets a DB row with
+    parent_filename = the video, workflow = frame-capture, and inherits
+    shot/scene/client/project. Idempotent per (asset, rounded t): repeat calls
+    return the existing row.
+    """
+    conn = STATE.conn()
+    row = conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    if row is None:
+        return {"ok": False, "error": "asset not found"}
+    if row["media_type"] != "video":
+        return {"ok": False, "error": "frame capture only works on video assets"}
+    src_path = Path(row["file_path"])
+    if not src_path.exists():
+        return {"ok": False, "error": f"source video missing on disk: {src_path}"}
+
+    # Resolve duration: DB column (probed at scan) or live ffprobe fallback.
+    duration = row["duration_sec"]
+    if not duration:
+        duration = scan_mod.probe_media_dimensions(src_path).get("duration_sec")
+    t_raw = payload.get("t", "end")
+    if t_raw == "start":
+        t = 0.04
+    elif t_raw == "end":
+        if not duration:
+            return {"ok": False, "error": "cannot resolve video duration for t='end'"}
+        t = max(0.0, float(duration) - 0.1)
+    else:
+        try:
+            t = max(0.0, float(t_raw))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "t must be a number, 'start', or 'end'"}
+        if duration:
+            t = min(t, max(0.0, float(duration) - 0.05))
+
+    out_filename = f"{src_path.stem}_f{int(round(t * 100)):05d}.png"
+    out_path = src_path.parent / out_filename
+
+    # Idempotency: same asset + same rounded t → return the existing row.
+    existing = conn.execute(
+        "SELECT id FROM assets WHERE filename = ?", (out_filename,)
+    ).fetchone()
+    if existing and out_path.exists():
+        return {"ok": True, "asset": _get_asset(existing["id"]), "existing": True, "t": round(t, 2)}
+
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-ss", f"{t:.3f}", "-i", str(src_path),
+             "-frames:v", "1", "-q:v", "2", str(out_path)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "error": "ffmpeg not found on PATH"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "ffmpeg timed out extracting the frame"}
+    if proc.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
+        try:
+            out_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return {"ok": False, "error": f"ffmpeg failed: {(proc.stderr or '')[-300:]}"}
+
+    dims = scan_mod.probe_media_dimensions(out_path)
+    now = time.time()
+    if existing:
+        # Row existed but the file had vanished — reuse the row, refresh size.
+        conn.execute(
+            "UPDATE assets SET size_bytes = ?, last_updated_at = ? WHERE id = ?",
+            (out_path.stat().st_size, now, existing["id"]),
+        )
+        new_id = existing["id"]
+    else:
+        cur = conn.execute(
+            """INSERT INTO assets (
+                file_path, filename, media_type, size_bytes,
+                source_type, has_sidecar, status,
+                shot_id, scene, model, workflow, client, project,
+                parent_filename, width, height,
+                first_seen_at, last_updated_at
+            ) VALUES (?, ?, 'image', ?, ?, 0, 'review', ?, ?, NULL,
+                      'frame-capture', ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id""",
+            (
+                str(out_path), out_filename, out_path.stat().st_size,
+                lib.classify_source_type(out_filename, False),
+                row["shot_id"], row["scene"], row["client"], row["project"],
+                row["filename"], dims.get("width"), dims.get("height"),
+                now, now,
+            ),
+        )
+        new_id = cur.fetchone()[0]
+
+    _audit("asset.frame_captured", {
+        "source_asset_id": asset_id, "new_asset_id": new_id,
+        "filename": out_filename, "t": round(t, 2),
+    })
+    STATE.mark_changed()
+    return {"ok": True, "asset": _get_asset(new_id), "existing": False, "t": round(t, 2)}
+
+
 def _create_draft(payload: dict) -> dict:
     """Stage a draft asset row.
 
@@ -3276,6 +3382,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_error_json(404, "asset not found")
                 return
             self._send_json(200, result)
+            return
+
+        m = re.match(r"^/api/assets/(\d+)/capture-frame$", path)
+        if m:
+            if STATE.folder is None:
+                self._send_error_json(409, "no working folder set")
+                return
+            result = _capture_frame(int(m.group(1)), self._read_json_body())
+            self._send_json(200 if result.get("ok") else 400, result)
             return
 
         m = re.match(r"^/api/assets/(\d+)/duplicate-draft$", path)

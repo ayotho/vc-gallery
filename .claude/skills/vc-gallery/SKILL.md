@@ -125,6 +125,23 @@ to the next free `_vN` — repeat calls never collide. `overrides.payload` keys
 merge on top, so a re-roll with a tweaked prompt is ONE call. The drawer's
 "⊕ New version" button is the human entry point to the same endpoint.
 
+### Frame capture — chain-shot primitive (2026-06-12)
+
+```
+POST /api/assets/{id}/capture-frame
+  body: {"t": 3.04} | {"t": "end"} | {"t": "start"}   // default "end"
+  -> {ok, asset, existing, t}   // a new IMAGE asset row
+```
+
+Mints an image asset from a frame of a video asset. The PNG lands next to
+the source video, named `<video_stem>_f<t*100>.png`, with
+`parent_filename` = the video, `workflow` = frame-capture, and inherited
+shot/scene/client/project. Idempotent per (asset, rounded t). THE primitive
+for the chain-shot workflow: end frame of clip N → start frame / edit base
+for clip N+1. No more agent-side ffmpeg + rename + rescan-wait. Human entry
+points: "⛶ Grab frame" (frame under the scrubber) and "⇥ End frame"
+buttons in the video drawer.
+
 ### Bulk scene assignment (2026-06-11)
 
 ```

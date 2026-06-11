@@ -3182,6 +3182,10 @@ async function fillDrawer(id) {
         ${asset.prompt ? '<button id="btn-copy-prompt">⎘ Copy prompt</button>' : ''}
         ${asset.file_path ? `<button id="btn-copy-path">⎘ Copy path</button>` : ''}
         ${!isDraft ? `<button id="btn-dupe-draft" title="Stage a new draft seeded with this asset's prompt, refs and settings — filename auto-bumps to the next version">⊕ New version</button>` : ''}
+        ${!isDraft && asset.media_type === 'video' ? `
+          <button id="btn-grab-frame" title="Save the frame under the scrubber as a new image asset (chain-shot: use it as the next gen's start frame)">⛶ Grab frame</button>
+          <button id="btn-grab-end" title="Save the last frame as a new image asset">⇥ End frame</button>
+        ` : ''}
       </div>
     </div>
   `;
@@ -3436,6 +3440,29 @@ async function fillDrawer(id) {
   }
 
   // Duplicate as variant draft
+  // Frame capture (chain-shot primitive) — grabs the frame under the
+  // scrubber (or the end frame) as a new image asset with lineage.
+  async function grabFrame(t) {
+    try {
+      const res = await api(`/api/assets/${asset.id}/capture-frame`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ t }),
+      });
+      flashToast(`${res.existing ? 'Frame already captured' : 'Frame saved'}: ${res.asset.filename} (t=${res.t}s)`, 'ok');
+      await refresh();
+    } catch (e) {
+      flashToast('Frame capture failed: ' + e.message, 'error');
+    }
+  }
+  const grabBtn = $('#btn-grab-frame');
+  if (grabBtn) grabBtn.addEventListener('click', () => {
+    const vid = $('#drawer-video');
+    grabFrame(vid && vid.currentTime > 0 ? Math.round(vid.currentTime * 100) / 100 : 'end');
+  });
+  const grabEndBtn = $('#btn-grab-end');
+  if (grabEndBtn) grabEndBtn.addEventListener('click', () => grabFrame('end'));
+
   const dupeBtn = $('#btn-dupe-draft');
   if (dupeBtn) {
     // Server-side duplicate (roadmap #8 — Lightroom virtual-copy pattern).
