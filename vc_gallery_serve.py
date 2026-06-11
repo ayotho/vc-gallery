@@ -36,6 +36,7 @@ import contextvars
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -1917,6 +1918,11 @@ def _open_in_finder(asset_id: int) -> tuple[bool, str]:
         return False, f"file not on disk: {p.name}"
     try:
         subprocess.Popen(["open", "-R", file_path])
+        # Reveal happens in Finder, but when the browser is full-screen the
+        # Finder window opens on another Space BEHIND it — director clicked
+        # three times on 06-10 and saw nothing. Explicitly activate Finder so
+        # macOS switches Spaces to the revealed window.
+        subprocess.Popen(["osascript", "-e", 'tell application "Finder" to activate'])
         return True, ""
     except OSError as exc:
         return False, f"open failed: {exc}"
@@ -2243,6 +2249,69 @@ def _duplicate_to_draft(asset_id: int, overrides: dict | None = None) -> dict:
         })
     return result
 
+
+
+
+def _export_heroes(payload: dict) -> dict:
+    """Export a segment's keeper assets to a handoff folder, renamed to shot
+    IDs (miner problem #4, 2026-06-12 — 'I NEED A SCRIPT or skill, that
+    exports all the heros of a segment into a folder'; the standalone
+    export_segment_heroes.py now has a first-class home).
+
+    Body: {scene: "remote_viewing", statuses?: ["hero"], media_type?:
+           "image"|"video"|"all", dest?: "/abs/path"}
+    Default dest: <gallery>/_exports/<scene>_heroes. Returns the manifest.
+    """
+    conn = STATE.conn()
+    gallery = STATE.folder
+    if gallery is None:
+        return {"ok": False, "error": "no working folder set"}
+    scene = str(payload.get("scene") or "").strip()
+    if not scene:
+        return {"ok": False, "error": "missing 'scene'"}
+    statuses = payload.get("statuses") or ["hero"]
+    if not isinstance(statuses, list) or not all(s in lib.VALID_STATUSES for s in statuses):
+        return {"ok": False, "error": f"statuses must be a list from {sorted(lib.VALID_STATUSES)}"}
+    media_type = payload.get("media_type") or "image"
+    if media_type not in ("image", "video", "all"):
+        return {"ok": False, "error": "media_type must be image|video|all"}
+
+    placeholders = ",".join("?" * len(statuses))
+    media_clause = "" if media_type == "all" else "AND media_type = ? "
+    args = [scene, *statuses] + ([] if media_type == "all" else [media_type])
+    rows = conn.execute(
+        f"SELECT * FROM assets WHERE scene = ? AND status IN ({placeholders}) "
+        + media_clause + "ORDER BY shot_id, id",
+        args,
+    ).fetchall()
+    if not rows:
+        return {"ok": False, "error": f"no {'/'.join(statuses)} {media_type} assets in segment '{scene}'"}
+
+    safe_scene = "".join(c if c.isalnum() or c in "-_" else "_" for c in scene)[:60]
+    dest = Path(payload["dest"]).expanduser() if payload.get("dest") else (gallery / "_exports" / f"{safe_scene}_heroes")
+    dest.mkdir(parents=True, exist_ok=True)
+
+    copied, missing, used = [], [], {}
+    for r in rows:
+        src_p = Path(r["file_path"])
+        if not src_p.exists():
+            missing.append({"id": r["id"], "filename": r["filename"]})
+            continue
+        base = r["shot_id"] or src_p.stem
+        n = used.get(base, 0) + 1
+        used[base] = n
+        if n == 1:
+            name = f"{base}{src_p.suffix}"
+        else:
+            slug = "".join(c if c.isalnum() or c in "-_" else "_" for c in src_p.stem)[:48].strip("_")
+            name = f"{base}__{slug}{src_p.suffix}"
+        shutil.copy2(src_p, dest / name)
+        copied.append({"id": r["id"], "shot_id": r["shot_id"], "exported_as": name})
+
+    _audit("export.heroes", {"scene": scene, "dest": str(dest),
+                             "copied": len(copied), "missing": len(missing)})
+    return {"ok": True, "scene": scene, "dest": str(dest),
+            "copied": copied, "missing": missing, "count": len(copied)}
 
 
 def _capture_frame(asset_id: int, payload: dict) -> dict:
@@ -3382,6 +3451,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_error_json(404, "asset not found")
                 return
             self._send_json(200, result)
+            return
+
+        if path == "/api/export/heroes":
+            if STATE.folder is None:
+                self._send_error_json(409, "no working folder set")
+                return
+            result = _export_heroes(self._read_json_body())
+            self._send_json(200 if result.get("ok") else 400, result)
             return
 
         m = re.match(r"^/api/assets/(\d+)/capture-frame$", path)

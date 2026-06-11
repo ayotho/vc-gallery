@@ -125,6 +125,20 @@ to the next free `_vN` — repeat calls never collide. `overrides.payload` keys
 merge on top, so a re-roll with a tweaked prompt is ONE call. The drawer's
 "⊕ New version" button is the human entry point to the same endpoint.
 
+### Hero export — editor handoff (2026-06-12)
+
+```
+POST /api/export/heroes
+  body: {scene: "remote_viewing", statuses?: ["hero"], media_type?: "image"|"video"|"all", dest?: "/abs/path"}
+  -> {ok, scene, dest, copied: [{id, shot_id, exported_as}], missing, count}
+```
+
+Copies a segment's keeper assets into `<gallery>/_exports/<scene>_heroes`,
+renamed to `<SHOT_ID>.<ext>` (shot-id collisions get a `__slug` suffix).
+Non-destructive (copy, not move). Human entry point: "⇣ Export heroes"
+button on each segment header in the Segments view (exports hero+accepted
+images). Replaces the standalone export_segment_heroes.py round-trip.
+
 ### Frame capture — chain-shot primitive (2026-06-12)
 
 ```

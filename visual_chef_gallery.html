@@ -687,6 +687,9 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .scene-header .sc-hero { color: var(--ink); font-weight: 540; }
 .scene-header .sc-accepted { color: #1f8a4d; }
 .scene-header .sc-review { color: #e67e22; }
+.scene-export-btn { margin-left: auto; border: 1px solid rgba(128,128,128,.3); background: transparent; color: inherit; border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer; flex-shrink: 0; }
+.scene-export-btn:hover { background: var(--canvas); border-color: var(--ink); }
+.scene-export-btn:disabled { opacity: .5; cursor: wait; }
 .scene-band { margin: 0 0 var(--s-sm); }
 .scene-band-label { font-size: 11px; font-weight: 540; letter-spacing: 0.5px; text-transform: uppercase; color: #8a877f; margin: 0 0 6px; padding: 0 4px; }
 .scene-band-label.hero { color: var(--ink); }
@@ -4173,6 +4176,7 @@ async function loadScenesView() {
           ${s.counts.review ? `<span class="sc-review">● ${s.counts.review} review</span>` : ''}
           <span>${s.counts.total} total</span>
         </div>
+        ${s.counts.hero || s.counts.accepted ? `<button class="scene-export-btn" data-scene="${escapeHtml(s.scene)}" title="Copy this segment's hero images into _exports/, renamed to shot IDs — editor handoff in one click">⇣ Export heroes</button>` : ''}
       </div>
       ${renderBand('Hero', 'hero', s.hero)}
       ${renderBand('Accepted', 'accepted', s.accepted)}
@@ -4205,6 +4209,28 @@ async function loadScenesView() {
       $('#grid-root').style.display = '';
       $('#scenes-root').style.display = 'none';
       refresh();
+    });
+  });
+  // Export heroes — one-click editor handoff (miner problem #4). Copies the
+  // segment's hero images to <gallery>/_exports/<scene>_heroes renamed to
+  // shot IDs, then reveals the folder in Finder.
+  root.querySelectorAll('.scene-export-btn').forEach(b => {
+    b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      b.disabled = true;
+      try {
+        const res = await api('/api/export/heroes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scene: b.dataset.scene, statuses: ['hero', 'accepted'], media_type: 'image' }),
+        });
+        const miss = res.missing.length ? ` (${res.missing.length} missing on disk)` : '';
+        flashToast(`Exported ${res.count} to ${res.dest}${miss}`, 'ok');
+      } catch (err) {
+        flashToast('Export failed: ' + err.message, 'error');
+      } finally {
+        b.disabled = false;
+      }
     });
   });
   // Drag-to-reorder scene groups. Order persists per client+project in localStorage.
