@@ -82,7 +82,16 @@ class State:
         self.db_path: Optional[Path] = None
         self.log_path: Optional[Path] = None
         self.thumb_dir: Optional[Path] = None
-        self._conn: Optional[sqlite3.Connection] = None
+        # Per-thread sqlite connections (2026-06-12). One connection shared
+        # across ThreadingHTTPServer workers + the watcher thread caused
+        # intermittent SQLITE_MISUSE ("bad parameter or other API misuse" in
+        # fire transitions) and a fetchone()→None in asset_count (#109). WAL
+        # mode is designed for one-connection-per-thread; _conn is now a
+        # property backed by threading.local with a generation counter so a
+        # folder switch invalidates every thread's handle. Existing call
+        # sites (self._conn reads AND assignments) keep working unchanged.
+        self._conn_local = threading.local()
+        self._conn_gen = 0
         self.last_change_at: float = time.time()
         self._known_files: set = set()
         # Live fire registry — keyed by pid → metadata about a wrapper subprocess
@@ -311,10 +320,49 @@ class State:
             out = [r for r in out if r["state"] == "running"]
         return out
 
+    @property
+    def _conn(self) -> Optional[sqlite3.Connection]:
+        """This thread's connection to the current DB (lazily opened).
+        None when no working folder is set — matching the old shared-conn
+        contract that every guard in this file checks against."""
+        if self.db_path is None:
+            return None
+        tl = self._conn_local
+        if getattr(tl, "conn", None) is None or getattr(tl, "gen", -1) != self._conn_gen:
+            old = getattr(tl, "conn", None)
+            if old is not None:
+                try:
+                    old.close()
+                except sqlite3.Error:
+                    pass
+            tl.conn = lib.connect(self.db_path)
+            tl.gen = self._conn_gen
+        return tl.conn
+
+    @_conn.setter
+    def _conn(self, value: Optional[sqlite3.Connection]) -> None:
+        """`self._conn = None` invalidates ALL threads' handles (generation
+        bump) — used on folder switch. Assigning a Connection adopts it for
+        the current thread only (legacy set_folder path)."""
+        tl = self._conn_local
+        if value is None:
+            self._conn_gen += 1
+            old = getattr(tl, "conn", None)
+            if old is not None:
+                try:
+                    old.close()
+                except sqlite3.Error:
+                    pass
+            tl.conn = None
+        else:
+            tl.conn = value
+            tl.gen = self._conn_gen
+
     def conn(self) -> sqlite3.Connection:
-        if self._conn is None:
+        c = self._conn
+        if c is None:
             raise RuntimeError("no working folder set")
-        return self._conn
+        return c
 
     # ---- Selection slot (multi-select) -------------------------------
     # Ephemeral pointer to which assets the director is looking at right
@@ -2788,12 +2836,15 @@ class Handler(BaseHTTPRequestHandler):
         if attachment:
             self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
         self.end_headers()
-        with path.open("rb") as f:
-            while True:
-                chunk = f.read(64 * 1024)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
+        try:
+            with path.open("rb") as f:
+                while True:
+                    chunk = f.read(64 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client aborted mid-download — routine, not log-worthy
 
     def _read_json_body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -3566,6 +3617,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _serve_with_range(self, path: Path) -> None:
         """Serve a file with HTTP Range support — required for inline <video> playback."""
+        try:
+            self._serve_with_range_inner(path)
+        except (BrokenPipeError, ConnectionResetError):
+            # Client aborted mid-stream — routine during video scrubbing
+            # (the <video> element drops connections constantly). Without
+            # this, every scrub dumped a full socketserver traceback into
+            # the server log, burying real errors.
+            pass
+
+    def _serve_with_range_inner(self, path: Path) -> None:
         if not path.exists() or not path.is_file():
             self._send_error_json(404, "not found")
             return
