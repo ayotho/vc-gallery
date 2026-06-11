@@ -1558,6 +1558,8 @@ select.mp-input { padding-right: 22px; }
           <option value="status">Status</option>
           <option value="shot">Shot ID</option>
           <option value="model">Model</option>
+          <option value="duration">Longest first</option>
+          <option value="duration-asc">Shortest first</option>
         </select></div>
       </div>
 
@@ -1896,7 +1898,7 @@ const state = {
   folder: null,
   facets: {},
   totalAssets: 0,
-  filters: { status: '', source_type: '', model: '', workflow: '', scene: '', shot_id: '', media_type: '', has_prompt: false, has_sidecar: false, q: '', seen_after: '' },
+  filters: { status: '', source_type: '', model: '', workflow: '', scene: '', shot_id: '', media_type: '', aspect: '', has_prompt: false, has_sidecar: false, q: '', seen_after: '' },
   latestOnly: false,
   stackVersions: true,
   sort: loadPref('vc.gallery.sort', 'recent'),
@@ -2402,8 +2404,8 @@ function renderCanvasHead() {
 // Canonical filterable properties for the top hub. Order = popover order.
 // Single value per property today; the popover is structured so a future
 // multi-select (server "is any of") is an additive change, not a rewrite.
-const FILTER_LABELS = { status: 'Status', media_type: 'Media', source_type: 'Source', model: 'Model', workflow: 'Workflow', scene: 'Segment', shot_id: 'Shot', seen_after: 'New since' };
-const FILTER_PROP_ORDER = ['status', 'media_type', 'source_type', 'model', 'workflow', 'scene', 'shot_id'];
+const FILTER_LABELS = { status: 'Status', media_type: 'Media', source_type: 'Source', model: 'Model', workflow: 'Workflow', scene: 'Segment', shot_id: 'Shot', aspect: 'Aspect', seen_after: 'New since' };
+const FILTER_PROP_ORDER = ['status', 'media_type', 'aspect', 'source_type', 'model', 'workflow', 'scene', 'shot_id'];
 
 function renderFilterBreadcrumb() {
   const el = $('#filter-breadcrumb');
@@ -2695,6 +2697,18 @@ function handleCardClick(id, ev) {
     syncSelectionToServer();
     return;
   }
+  // Shift+click with no anchor yet → start the selection here (Finder/
+  // Lightroom semantics; previously you HAD to Cmd-click first, which
+  // nobody's muscle memory expects — #105).
+  if (ev && ev.shiftKey && state.lastMultiAnchor == null) {
+    state.multiSelection.add(id);
+    state.lastMultiAnchor = id;
+    renderMultiSelectChrome();
+    const card = document.querySelector(`.card[data-id="${id}"]`);
+    if (card) card.classList.add('multi-selected');
+    syncSelectionToServer();
+    return;
+  }
   // Shift+click → range select from last anchor (visible items only)
   if (ev && ev.shiftKey && state.lastMultiAnchor != null) {
     const a = state.items.findIndex(x => x.id === state.lastMultiAnchor);
@@ -2708,7 +2722,10 @@ function handleCardClick(id, ev) {
       return;
     }
   }
-  // Plain click → open the drawer (single-select)
+  // Plain click → open the drawer (single-select). Also anchor future
+  // shift-click ranges here — click A then shift-click B selects A..B,
+  // matching Finder/Lightroom (#105).
+  state.lastMultiAnchor = id;
   selectAsset(id);
 }
 
@@ -2971,8 +2988,11 @@ async function fillDrawer(id) {
       const removeBtnHtml = isDraft && rawRef
         ? `<button class="ref-remove-btn" data-ref-raw="${escapeHtml(rawRef)}" data-ref-index="${i}" title="Remove this reference" aria-label="Remove reference">×</button>`
         : '';
+      // #80: when the ref maps to a gallery asset, clicking opens its drawer
+      // (lineage navigation) instead of a raw image tab.
+      const assetAttr = r.asset_id ? `data-asset-id="${r.asset_id}"` : '';
       return `
-        <div class="ref-thumb" data-src="${src}" title="${safeName}" ${dragAttrs}>
+        <div class="ref-thumb" data-src="${src}" title="${r.asset_id ? safeName + ' — open in gallery' : safeName}" ${assetAttr} ${dragAttrs}>
           ${previewHtml}
           ${removeBtnHtml}
           ${copyBtnHtml}
@@ -3447,6 +3467,8 @@ async function fillDrawer(id) {
   body.querySelectorAll('.ref-thumb').forEach(el => {
     el.addEventListener('click', (e) => {
       if (e.target.closest('.ref-copy-btn')) return;
+      // #80: ref backed by a gallery asset → navigate to its drawer
+      if (el.dataset.assetId) { selectAsset(Number(el.dataset.assetId)); return; }
       const src = el.dataset.src;
       if (src) window.open(src, '_blank');
     });
@@ -3923,6 +3945,7 @@ function buildQuery() {
   if (f.scene) params.set('scene', f.scene);
   if (f.shot_id) params.set('shot_id', f.shot_id);
   if (f.media_type) params.set('media_type', f.media_type);
+  if (f.aspect) params.set('aspect', f.aspect);
   if (f.has_prompt) params.set('has_prompt', '1');
   if (f.has_sidecar) params.set('has_sidecar', '1');
   if (f.q) params.set('q', f.q);

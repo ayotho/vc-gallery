@@ -901,6 +901,17 @@ def _row_to_asset(row: sqlite3.Row, thumb_dir: Path) -> dict:
     return asset
 
 
+# #62 — aspect-ratio buckets computed from probed width/height. Tolerances
+# absorb codec rounding (1080x1920 vs 1088x1920 etc). NULL when unprobed.
+_ASPECT_BUCKET_SQL = (
+    "CASE WHEN a.width IS NULL OR a.height IS NULL OR a.height = 0 THEN NULL "
+    "WHEN abs(CAST(a.width AS REAL)/a.height - 1.7778) < 0.08 THEN '16:9' "
+    "WHEN abs(CAST(a.width AS REAL)/a.height - 0.5625) < 0.04 THEN '9:16' "
+    "WHEN abs(CAST(a.width AS REAL)/a.height - 1.0) < 0.05 THEN '1:1' "
+    "ELSE 'other' END"
+)
+
+
 def _build_where_no_prompt(params: dict) -> tuple[str, list[Any]]:
     """Like _build_where but skips prompt/q filters and uses 'a.' prefix only.
     Used when we know there's no JOIN on prompts — avoids ambiguous column refs."""
@@ -927,6 +938,11 @@ def _build_where_no_prompt(params: dict) -> tuple[str, list[Any]]:
             values.append(float(v))
         except (ValueError, TypeError):
             pass
+    if params.get("aspect"):
+        v = params["aspect"][0] if isinstance(params["aspect"], list) else params["aspect"]
+        if v in ("16:9", "9:16", "1:1", "other"):
+            clauses.append(f"({_ASPECT_BUCKET_SQL}) = ?")
+            values.append(v)
     if not clauses:
         return "", values
     return " WHERE " + " AND ".join(clauses), values
@@ -974,6 +990,11 @@ def _build_where(params: dict) -> tuple[str, list[Any]]:
             values.append(float(v))
         except (ValueError, TypeError):
             pass
+    if params.get("aspect"):
+        v = params["aspect"][0] if isinstance(params["aspect"], list) else params["aspect"]
+        if v in ("16:9", "9:16", "1:1", "other"):
+            clauses.append(f"({_ASPECT_BUCKET_SQL}) = ?")
+            values.append(v)
     if not clauses:
         return "", values
     return " WHERE " + " AND ".join(clauses), values
@@ -1057,6 +1078,9 @@ def _list_assets(params: dict) -> dict:
         "model": "a.model IS NULL, a.model, a.first_seen_at DESC",
         "id": "a.id ASC",
         "id-desc": "a.id DESC",
+        # #61 — duration sort for video triage; NULLs (images / unprobed) sink
+        "duration": "a.duration_sec IS NULL, a.duration_sec DESC",
+        "duration-asc": "a.duration_sec IS NULL, a.duration_sec ASC",
     }.get(sort, "a.first_seen_at DESC")
 
     rows = conn.execute(
@@ -1171,6 +1195,12 @@ def _facet_counts(params: dict | None = None) -> dict:
                 f"GROUP BY {col} ORDER BY c DESC"
             )
             out[col] = {r[col]: r["c"] for r in conn.execute(sql)}
+        # aspect (#62) — bucketed from width/height, alias `a` to match the CASE
+        sql = (
+            f"SELECT ({_ASPECT_BUCKET_SQL}) k, count(*) c FROM assets a "
+            "GROUP BY k HAVING k IS NOT NULL ORDER BY c DESC"
+        )
+        out["aspect"] = {r["k"]: r["c"] for r in conn.execute(sql)}
         # shot_id
         sql = (
             "SELECT shot_id, count(*) c FROM assets "
@@ -1195,6 +1225,17 @@ def _facet_counts(params: dict | None = None) -> dict:
             f"GROUP BY a.{col} ORDER BY c DESC"
         )
         out[col] = {r[col]: r["c"] for r in conn.execute(sql, values)}
+
+    # aspect facet (#62) — cross-filtered like the rest, excluding itself
+    scoped_params = {k: v for k, v in params.items() if k != "aspect"}
+    where, values = _build_where(scoped_params) if need_join else _build_where_no_prompt(scoped_params)
+    sql = (
+        f"SELECT ({_ASPECT_BUCKET_SQL}) k, count(*) c "
+        f"{join_clause}"
+        f"{where} "
+        "GROUP BY k HAVING k IS NOT NULL ORDER BY c DESC"
+    )
+    out["aspect"] = {r["k"]: r["c"] for r in conn.execute(sql, values)}
 
     # shot_id facet
     scoped_params = {k: v for k, v in params.items() if k != "shot_id"}
@@ -1260,13 +1301,26 @@ def _resolve_ref_to_url(ref: str, gallery: Path | None) -> dict:
         }
     # Build a /ref?path= URL so the browser can request it through the server
     from urllib.parse import quote
-    return {
+    out = {
         "raw": ref,
         "kind": "file",
         "filename": p.name,
         "url": f"/ref?path={quote(str(p))}",
         "exists": True,
     }
+    # #80 (deferred half): link the ref back to its gallery asset when one
+    # exists, so the UI can open the asset's drawer instead of a raw image
+    # tab. Filename lookup is enough — refs are gallery-relative by
+    # convention and the corpus is small.
+    try:
+        hit = STATE.conn().execute(
+            "SELECT id FROM assets WHERE filename = ? LIMIT 1", (p.name,)
+        ).fetchone()
+        if hit:
+            out["asset_id"] = hit["id"]
+    except (RuntimeError, sqlite3.Error):
+        pass
+    return out
 
 
 def _get_asset(asset_id: int) -> Optional[dict]:
