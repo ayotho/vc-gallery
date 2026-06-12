@@ -2258,6 +2258,144 @@ def _duplicate_to_draft(asset_id: int, overrides: dict | None = None) -> dict:
 
 
 
+
+# ---------------------------------------------------------------------------
+# HF MCP job tracking (2026-06-14, mined problem #2 — the branch namesake).
+# Generations fired OUTSIDE the wrapper (Higgsfield MCP / web UI) used to need
+# hand-rolled watcher loops + manual download/naming. POST /api/hf/track makes
+# the server babysit the job: poll → auto-import on completion (download,
+# /studio filename, DB row, dims) → audit. ip_blocked failures are surfaced
+# distinctly so torched credits are at least visible immediately.
+_HF_TRACKED: dict = {}      # job_id → {state, registered_at, shot_id, ..., asset_id?, error?}
+_HF_TRACK_LOCK = threading.Lock()
+_HF_POLLER_STARTED = threading.Event()
+_HF_POLL_INTERVAL = 30
+_HF_TRACK_TIMEOUT = 2 * 3600
+
+def _hf_poll_loop() -> None:
+    import hf_import as hf_mod
+    while True:
+        time.sleep(_HF_POLL_INTERVAL)
+        with _HF_TRACK_LOCK:
+            pending = {j: dict(info) for j, info in _HF_TRACKED.items()
+                       if info["state"] == "cooking"}
+        for job_id, info in pending.items():
+            now = time.time()
+            if now - info["registered_at"] > _HF_TRACK_TIMEOUT:
+                with _HF_TRACK_LOCK:
+                    _HF_TRACKED[job_id].update(state="timeout", finished_at=now)
+                _audit("hf_track.timeout", {"job_id": job_id})
+                continue
+            try:
+                job = hf_mod.hf_get_job(job_id)
+            except RuntimeError as e:
+                # transient CLI/network failure — retry next tick, note it
+                with _HF_TRACK_LOCK:
+                    _HF_TRACKED[job_id]["last_poll_error"] = str(e)[:200]
+                continue
+            status = str(job.get("status") or "").lower()
+            if status == "completed" and job.get("result_url"):
+                try:
+                    res = hf_mod.import_hf_asset(
+                        url_or_id=job_id,
+                        gallery=str(STATE.folder) if STATE.folder else None,
+                        client=info.get("client") or "",
+                        project=info.get("project") or "",
+                        shot_id=info.get("shot_id") or "",
+                        scene=info.get("scene") or "",
+                        workflow=info.get("workflow") or "",
+                        filename=info.get("filename") or "",
+                        notes=info.get("notes") or "",
+                    )
+                except hf_mod.ImportError_ as e:
+                    with _HF_TRACK_LOCK:
+                        _HF_TRACKED[job_id].update(state="import_failed",
+                                                   error=f"{e.code}: {e}", finished_at=now)
+                    _audit("hf_track.import_failed", {"job_id": job_id, "error": str(e)[:300]})
+                    continue
+                with _HF_TRACK_LOCK:
+                    _HF_TRACKED[job_id].update(state="landed",
+                                               asset_id=res.get("asset_id"),
+                                               filename=res.get("filename"),
+                                               finished_at=now)
+                _audit("hf_track.landed", {"job_id": job_id, "asset_id": res.get("asset_id"),
+                                           "filename": res.get("filename")})
+                STATE.mark_changed()
+            elif status in {"failed", "cancelled", "canceled", "error", "rejected", "moderated"}:
+                reason = str(job.get("error") or job.get("failure_reason") or status)
+                state = "ip_blocked" if ("ip" in reason.lower() or status == "moderated") else "failed"
+                with _HF_TRACK_LOCK:
+                    _HF_TRACKED[job_id].update(state=state, error=reason[:300], finished_at=now)
+                _audit("hf_track.failed", {"job_id": job_id, "state": state, "reason": reason[:300]})
+
+def _track_hf_job(payload: dict) -> dict:
+    import hf_import as hf_mod
+    raw = str(payload.get("job_id") or "")
+    job_id = hf_mod.extract_job_id(raw)
+    if not job_id:
+        return {"ok": False, "error": f"no job UUID in {raw!r}"}
+    if STATE.folder is None:
+        return {"ok": False, "error": "no working folder set"}
+    with _HF_TRACK_LOCK:
+        if job_id in _HF_TRACKED and _HF_TRACKED[job_id]["state"] == "cooking":
+            return {"ok": True, "job_id": job_id, "state": "cooking", "existing": True}
+        _HF_TRACKED[job_id] = {
+            "state": "cooking", "registered_at": time.time(),
+            "shot_id": payload.get("shot_id"), "scene": payload.get("scene"),
+            "client": payload.get("client"), "project": payload.get("project"),
+            "workflow": payload.get("workflow"), "filename": payload.get("filename"),
+            "notes": payload.get("notes"),
+        }
+    if not _HF_POLLER_STARTED.is_set():
+        _HF_POLLER_STARTED.set()
+        threading.Thread(target=_hf_poll_loop, daemon=True, name="hf-track-poller").start()
+    _audit("hf_track.registered", {"job_id": job_id, "shot_id": payload.get("shot_id")})
+    return {"ok": True, "job_id": job_id, "state": "cooking",
+            "poll_interval_s": _HF_POLL_INTERVAL,
+            "note": "server polls until terminal; check GET /api/hf/tracked"}
+
+def _list_tracked_jobs() -> dict:
+    with _HF_TRACK_LOCK:
+        jobs = {j: {k: v for k, v in info.items()} for j, info in _HF_TRACKED.items()}
+    return {"jobs": jobs, "count": len(jobs)}
+
+
+
+# Credits surfacing (2026-06-14, mined problem #3 — out-of-credits discovered
+# only when a fire bounces at 4am). Cached proxy of `higgsfield account
+# status`; the UI shows a wallet chip that goes red when low.
+_CREDITS_CACHE: dict = {"at": 0.0, "data": None}
+_CREDITS_TTL = 60
+
+def _hf_binary() -> str:
+    found = shutil.which("higgsfield")
+    if found:
+        return found
+    fallback = Path.home() / ".local" / "bin" / "higgsfield"
+    return str(fallback) if fallback.exists() else "higgsfield"
+
+def _get_credits() -> dict:
+    now = time.time()
+    if _CREDITS_CACHE["data"] and now - _CREDITS_CACHE["at"] < _CREDITS_TTL:
+        return {**_CREDITS_CACHE["data"], "cached": True}
+    try:
+        proc = subprocess.run([_hf_binary(), "--json", "account", "status"],
+                              capture_output=True, text=True, timeout=15)
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip()[:200] or f"exit {proc.returncode}")
+        raw = proc.stdout[proc.stdout.index("{"):]
+        data = json.loads(raw)
+        out = {"ok": True, "credits": data.get("credits"),
+               "plan": data.get("subscription_plan_type"), "fetched_at": now}
+        _CREDITS_CACHE.update(at=now, data=out)
+        return out
+    except Exception as e:  # noqa: BLE001 — surface, don't crash the panel
+        stale = _CREDITS_CACHE["data"]
+        if stale:
+            return {**stale, "stale": True, "error": str(e)[:200]}
+        return {"ok": False, "error": str(e)[:200]}
+
+
 def _export_heroes(payload: dict) -> dict:
     """Export a segment's keeper assets to a handoff folder, renamed to shot
     IDs (miner problem #4, 2026-06-12 — 'I NEED A SCRIPT or skill, that
@@ -3225,6 +3363,14 @@ class Handler(BaseHTTPRequestHandler):
                 "lines": [ln.rstrip("\n") for ln in tail],
             })
             return
+        if path == "/api/credits":
+            self._send_json(200, _get_credits())
+            return
+
+        if path == "/api/hf/tracked":
+            self._send_json(200, _list_tracked_jobs())
+            return
+
         if path == "/api/drafts":
             if STATE.folder is None:
                 self._send_error_json(409, "no working folder set")
@@ -3457,6 +3603,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_error_json(404, "asset not found")
                 return
             self._send_json(200, result)
+            return
+
+        if path == "/api/hf/track":
+            payload = self._read_json_body()
+            result = _track_hf_job(payload)
+            self._send_json(200 if result.get("ok") else 400, result)
             return
 
         if path == "/api/export/heroes":

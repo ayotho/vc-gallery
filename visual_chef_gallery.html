@@ -695,6 +695,9 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
 .scene-export-btn { margin-left: auto; border: 1px solid rgba(128,128,128,.3); background: transparent; color: inherit; border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer; flex-shrink: 0; }
 .scene-export-btn:hover { background: var(--canvas); border-color: var(--ink); }
 .scene-export-btn:disabled { opacity: .5; cursor: wait; }
+/* Wallet chip (#3 mined problem — out-of-credits discovered only at fire time) */
+.credits-chip { font-family: var(--mono); font-size: 11px; padding: 2px 9px; border-radius: var(--r-pill); border: 1px solid rgba(128,128,128,.3); color: inherit; white-space: nowrap; }
+.credits-chip.low { background: rgba(194,91,91,.15); border-color: #c25b5b; color: #c25b5b; font-weight: 600; }
 .scene-band { margin: 0 0 var(--s-sm); }
 .scene-band-label { font-size: 11px; font-weight: 540; letter-spacing: 0.5px; text-transform: uppercase; color: #8a877f; margin: 0 0 6px; padding: 0 4px; }
 .scene-band-label.hero { color: var(--ink); }
@@ -1413,6 +1416,7 @@ select.mp-input { padding-right: 22px; }
       </div>
 
       <div class="counter"><b id="counter-shown">0</b> of <span id="counter-total">0</span></div>
+      <span id="credits-chip" class="credits-chip" hidden title="Higgsfield credits (refreshes every 5 min)"></span>
     </div>
 
     <div class="topbar-right">
@@ -6341,6 +6345,24 @@ function navigateLightbox(delta) {
       }
     } catch { /* chip is best-effort — never block boot */ }
   })();
+
+  // Wallet chip — surfaces Higgsfield credits during review so an empty
+  // wallet is discovered HERE, not via a failed fire at 4am. Red under 50.
+  const pollCredits = async () => {
+    try {
+      const r = await fetch('/api/credits');
+      const d = await r.json();
+      const chip = document.getElementById('credits-chip');
+      if (!chip) return;
+      if (d.credits == null) { chip.hidden = true; return; }
+      const n = Math.floor(d.credits);
+      chip.textContent = `⚡ ${n} cr${d.stale ? ' (stale)' : ''}`;
+      chip.classList.toggle('low', n < 50);
+      chip.hidden = false;
+    } catch { /* chip is best-effort */ }
+  };
+  pollCredits();
+  setInterval(pollCredits, 5 * 60 * 1000);
 
   // Live auto-refresh: chain polls via setTimeout so a slow poll can't stack
   // up overlapping calls (the old setInterval(5000) would queue duplicate

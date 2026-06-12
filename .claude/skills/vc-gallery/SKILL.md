@@ -125,6 +125,29 @@ to the next free `_vN` — repeat calls never collide. `overrides.payload` keys
 merge on top, so a re-roll with a tweaked prompt is ONE call. The drawer's
 "⊕ New version" button is the human entry point to the same endpoint.
 
+### HF MCP job tracking — fire anywhere, land in the gallery (2026-06-14)
+
+```
+POST /api/hf/track
+  body: {job_id: "<uuid or HF url>", shot_id?, scene?, filename?, client?, project?, workflow?, notes?}
+  -> {ok, job_id, state: "cooking"}
+GET /api/hf/tracked -> {jobs: {<job_id>: {state, asset_id?, error?, ...}}, count}
+```
+
+For generations fired OUTSIDE the wrapper (Higgsfield MCP, web UI): register
+the job id and the server polls every 30s until terminal, then auto-imports
+(download → /studio filename → DB row with dims/prompt/refs). States:
+cooking → landed | failed | ip_blocked | import_failed | timeout (2h cap).
+Agent pattern: fire via MCP → one POST → walk away. No more hand-rolled
+watcher loops. Tracking is in-memory (server restart drops pending jobs —
+re-POST them).
+
+### Credits chip (2026-06-14)
+
+`GET /api/credits` → `{credits, plan}` (proxies `higgsfield account status`,
+cached 60s). The UI shows a wallet chip next to the asset counter — red
+under 50 credits. Check it before staging big batches.
+
 ### Stage + fire in one call (2026-06-12)
 
 `POST /api/draft` accepts `"fire": true` in the envelope — the draft is
