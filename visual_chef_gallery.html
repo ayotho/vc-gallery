@@ -1811,6 +1811,7 @@ const MODEL_SCHEMAS = {
       genre: { type: 'select', options: ['auto','action','horror','comedy','noir','drama','epic'], default: 'auto', group: 'core' },
       sound: { type: 'select', options: ['on','off'], default: 'off', group: 'core' },
       seed: { type: 'number', min: 0, max: 999999999, default: '', group: 'core', help: 'Optional reproducibility seed' },
+      count: { type: 'number', min: 1, max: 9, default: 1, group: 'output', help: 'Variants (1–9, schema cap) — each output lands as _1/_2/…' },
     },
   },
   cinematic_studio_video_v2: {
@@ -1820,6 +1821,7 @@ const MODEL_SCHEMAS = {
       mode: { type: 'select', options: ['pro','std'], default: 'pro', group: 'quality' },
       duration: { type: 'number', min: 5, max: 10, default: 8, group: 'timing', help: 'Seconds' },
       aspect_ratio: { type: 'select', options: ['16:9','9:16','1:1'], default: '16:9', group: 'output' },
+      count: { type: 'number', min: 1, max: 9, default: 1, group: 'output', help: 'Variants (1–9, schema cap) — each output lands as _1/_2/…' },
     },
   },
   'fal-ai/kling-video/o3/pro/reference-to-video': {
