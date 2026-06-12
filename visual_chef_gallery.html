@@ -546,7 +546,12 @@ body.sidebar-collapsed .sidebar-show { display: inline-flex; }
   backdrop-filter: blur(4px); cursor: pointer; user-select: none;
   opacity: 0; transition: opacity 0.15s ease;
 }
-.card:hover .card-id-chip { opacity: 1; }
+/* On hover the A/R/V/H quick row slides over the chip's resting spot
+   (bottom 6px vs the row at bottom 10px, z-index 4) — lift the chip above
+   the row so it stays clickable (#126). 46px = row height 30 + row bottom
+   10 + 6px gap. Transition makes it ride up with the row's slide-in. */
+.card-id-chip { transition: opacity 0.15s ease, bottom 0.12s ease; }
+.card:hover .card-id-chip { opacity: 1; bottom: 46px; }
 .card-id-chip:hover { background: rgba(0,0,0,0.85); color: #fff; }
 
 /* Compare overlay */
