@@ -647,19 +647,35 @@ def _reconcile_renames(conn, source: Path, log_target: Path) -> int:
         if not Path(r["file_path"]).exists():
             missing_rows.append(r)
 
-    # Build {filename: Path} for on-disk files NOT yet in DB
+    # Build {filename: Path} for on-disk files NOT yet in DB. Includes ONE
+    # level of subfolders (2026-06-13): the director sorts keepers into
+    # subfolders like EP5/Accepted/ — 50 accepted/hero rows were ghosting
+    # with dead top-level paths while the files sat one folder down. Moved
+    # files repoint exactly like renamed ones (same filename + size guard).
+    # Hidden dirs, .drafts and _exports stay excluded.
     db_paths = {r["file_path"] for r in db_rows}
     on_disk_unmatched = {}
-    for p in source.iterdir():
+
+    def _collect(p: Path) -> None:
         if not p.is_file() or p.suffix.lower() not in lib.MEDIA_EXTS:
-            continue
+            return
         try:
             if p.stat().st_size == 0:
-                continue
+                return
         except OSError:
-            continue
+            return
         if str(p.resolve()) not in db_paths:
             on_disk_unmatched.setdefault(p.name, []).append(p)
+
+    for p in source.iterdir():
+        if p.is_dir() and not p.name.startswith((".", "_")) and p.name != "tmp":
+            try:
+                for child in p.iterdir():
+                    _collect(child)
+            except OSError:
+                continue
+        else:
+            _collect(p)
 
     for missing in missing_rows:
         candidates = on_disk_unmatched.get(missing["filename"], [])

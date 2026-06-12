@@ -93,6 +93,11 @@ class State:
         # sites (self._conn reads AND assignments) keep working unchanged.
         self._conn_local = threading.local()
         self._conn_gen = 0
+        # When False (non-default-port instances, e.g. the 8771 preview),
+        # set_folder skips lib.remember_folder so a secondary instance can't
+        # poison the shared 'current_folder' memory that launchd respawns
+        # the primary into (2026-06-13 EP1-flip incident).
+        self.remember = True
         self.last_change_at: float = time.time()
         self._known_files: set = set()
         # Live fire registry — keyed by pid → metadata about a wrapper subprocess
@@ -436,7 +441,8 @@ class State:
             self.thumb_dir.mkdir(parents=True, exist_ok=True)
             self._conn = lib.connect(self.db_path)
             self._known_files = set()  # reset so watcher reinitializes for new folder
-            lib.remember_folder(folder)
+            if self.remember:
+                lib.remember_folder(folder)
         # Selection slot belongs to a specific folder — wipe on swap.
         # Done outside the main _lock to avoid lock-order issues (selection
         # uses its own lock).
@@ -3997,7 +4003,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--host", default=DEFAULT_HOST)
     ap.add_argument("--no-scan", action="store_true", help="Skip auto-scan on boot")
+    ap.add_argument("--no-remember", action="store_true",
+                    help="Don't update the shared last-used-folder memory (auto for non-default ports)")
     args = ap.parse_args(argv)
+
+    STATE.remember = (args.port == DEFAULT_PORT) and not args.no_remember
 
     cfg = lib.load_server_config()
     chosen = args.folder or cfg.get("current_folder")

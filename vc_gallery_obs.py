@@ -195,15 +195,20 @@ def find_orphans(gallery_folder: Path, db_path: Path) -> dict[str, list[dict[str
     conn.row_factory = sqlite3.Row
     try:
         # zero_byte_rows — exclude draft rows (synthetic, size_bytes=0 by design)
+        # Exclude synthetic .drafts paths by PATH, not just status: a draft
+        # the director rejects keeps its synthetic path but flips status to
+        # 'rejected' — it's not a placeholder anomaly (2026-06-13).
         rows = conn.execute(
             "SELECT id, filename, file_path, status, model FROM assets "
-            "WHERE (size_bytes = 0 OR size_bytes IS NULL) AND status != 'draft'"
+            "WHERE (size_bytes = 0 OR size_bytes IS NULL) AND status != 'draft' "
+            "AND file_path NOT LIKE '%.draft.json'"
         ).fetchall()
         out["zero_byte_rows"] = [dict(r) for r in rows]
 
         # missing_on_disk — also exclude drafts (their file_path is synthetic)
         all_paths = conn.execute(
-            "SELECT id, filename, file_path, status, size_bytes FROM assets WHERE status != 'draft'"
+            "SELECT id, filename, file_path, status, size_bytes FROM assets "
+            "WHERE status != 'draft' AND file_path NOT LIKE '%.draft.json'"
         ).fetchall()
         on_disk_set = set()
         for p in gallery_folder.iterdir():
@@ -220,7 +225,10 @@ def find_orphans(gallery_folder: Path, db_path: Path) -> dict[str, list[dict[str
         db_paths = set()
         for r in all_paths:
             db_paths.add(r["file_path"])
-            if r["file_path"] not in on_disk_set:
+            # Not in the top-level walk ≠ missing: rename reconciliation can
+            # legitimately repoint rows into subfolders (EP5/Accepted/ etc,
+            # 2026-06-13). Only report rows whose file genuinely isn't there.
+            if r["file_path"] not in on_disk_set and not Path(r["file_path"]).exists():
                 out["missing_on_disk"].append(dict(r))
 
         for p_str in on_disk_set - db_paths:
