@@ -941,6 +941,15 @@ select.mp-input { padding-right: 22px; }
   color: var(--ink); opacity: 0.45; text-transform: uppercase;
   background: rgba(255,255,255,0.7); padding: 4px 10px; border-radius: 3px;
 }
+/* Higgsfield Element ref badge — top-left corner pill marking a ref that came
+   from an element id + url (not a local file). Display + traceability only. */
+.ref-element-badge {
+  position: absolute; top: 6px; left: 6px; z-index: 2;
+  font-family: var(--mono); font-size: 8.5px; letter-spacing: 1px;
+  text-transform: uppercase; color: #fff;
+  background: rgba(40,40,40,0.78); padding: 2px 6px; border-radius: 3px;
+  pointer-events: none;
+}
 .ref-thumb-meta {
   position: absolute; left: 0; right: 0; bottom: 0;
   display: flex; align-items: center; gap: 6px;
@@ -2975,6 +2984,12 @@ async function fillDrawer(id) {
       // Both render a styled card with NO <img> (so no broken-image icon),
       // and a labeled badge ('external' / 'missing') showing the cause.
       const placeholderLabel = isMissing ? 'missing' : 'external';
+      // Higgsfield Element ref — has a real image url, renders as a normal
+      // <img>, with a small corner badge so the director can tell it apart
+      // from a local file ref (display + traceability only).
+      const elementBadgeHtml = r.kind === 'element'
+        ? `<div class="ref-element-badge" title="Higgsfield Element${r.element_id ? ' · ' + escapeHtml(r.element_id) : ''}">element</div>`
+        : '';
       const previewHtml = isPlaceholder
         ? `<div class="ref-thumb-img ref-external"><div class="ref-external-label">${placeholderLabel}</div></div>`
         : (src
@@ -3008,6 +3023,7 @@ async function fillDrawer(id) {
       return `
         <div class="ref-thumb" data-src="${src}" title="${r.asset_id ? safeName + ' — open in gallery' : safeName}" ${assetAttr} ${dragAttrs}>
           ${previewHtml}
+          ${elementBadgeHtml}
           ${removeBtnHtml}
           ${copyBtnHtml}
           <div class="ref-thumb-meta">

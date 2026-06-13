@@ -887,17 +887,24 @@ def _row_to_asset(row: sqlite3.Row, thumb_dir: Path) -> dict:
                 image_refs_resolved = [_resolve_ref_to_url(r, STATE.folder) for r in image_refs]
             except Exception:  # noqa: BLE001 — STATE.folder may be None during boot
                 image_refs_resolved = []
+            # Higgsfield Element refs resolve to the same drawer-iterable shape
+            # as file refs (a url-kind thumbnail), so they append straight onto
+            # refs_resolved with zero new frontend render path.
+            element_refs = _normalize_element_refs(note_data.get("element_refs"))
+            element_refs_resolved = [_resolve_element_ref(e) for e in element_refs]
+            all_refs_resolved = image_refs_resolved + element_refs_resolved
             asset["draft"] = {
                 "payload": note_data.get("payload", {}),
                 "image_refs": image_refs,
-                "image_refs_resolved": image_refs_resolved,
+                "image_refs_resolved": all_refs_resolved,
+                "element_refs": element_refs,
                 "estimated_cost": note_data.get("estimated_cost"),
                 "staged_at": note_data.get("staged_at"),
                 "last_edited_at": note_data.get("last_edited_at"),
             }
             # Mirror the resolved refs to the top-level field so client card
             # code can read asset.refs_resolved uniformly (drafts + fired gens).
-            asset["refs_resolved"] = image_refs_resolved
+            asset["refs_resolved"] = all_refs_resolved
             asset["refs"] = image_refs
             # Surface user-facing notes from the JSON blob's user_notes field
             # (set by the PATCH path). Director's drawer reads asset.notes —
@@ -1330,6 +1337,53 @@ def _resolve_ref_to_url(ref: str, gallery: Path | None) -> dict:
     return out
 
 
+def _normalize_element_refs(raw: object) -> list[dict]:
+    """Coerce stored/incoming element_refs into clean {id,url,name,category} dicts.
+
+    Higgsfield Elements arrive as {id, url, name, category?} — the caller already
+    holds both the element UUID and its cloudfront image url, so the gallery
+    never fetches anything (display + traceability only, no HF auth). Drops
+    malformed entries (missing id or url) so the resolver below can trust them.
+    """
+    out: list[dict] = []
+    if not isinstance(raw, list):
+        return out
+    for e in raw:
+        if not isinstance(e, dict):
+            continue
+        eid = e.get("id")
+        url = e.get("url")
+        if not eid or not url:
+            continue
+        item = {"id": str(eid), "url": str(url), "name": str(e.get("name") or eid)}
+        cat = e.get("category")
+        if cat:
+            item["category"] = str(cat)
+        out.append(item)
+    return out
+
+
+def _resolve_element_ref(e: dict) -> dict:
+    """Map a normalized element ref into the same shape the drawer iterates.
+
+    An element ref is just a url-kind ref with a real image, so it slots into
+    `refs_resolved` alongside file refs with no new frontend render path —
+    `kind: "element"` only drives an optional badge. exists=True so the drawer
+    renders an <img> (not the external/missing placeholder).
+    """
+    out = {
+        "raw": e["url"],
+        "kind": "element",
+        "url": e["url"],
+        "filename": e.get("name") or e["id"],
+        "element_id": e["id"],
+        "exists": True,
+    }
+    if e.get("category"):
+        out["category"] = e["category"]
+    return out
+
+
 def _get_asset(asset_id: int) -> Optional[dict]:
     conn = STATE.conn()
     row = conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
@@ -1384,10 +1438,20 @@ def _get_asset(asset_id: int) -> Optional[dict]:
             note_data = json.loads(row["notes"]) if row["notes"] else {}
         except (json.JSONDecodeError, TypeError):
             note_data = {}
-        asset["draft"]["image_refs_resolved"] = [
+        _img_resolved = [
             _resolve_ref_to_url(r, STATE.folder)
             for r in (note_data.get("image_refs") or [])
         ]
+        # Append Higgsfield Element refs as url-kind thumbnails (display +
+        # traceability only — same shape the drawer already iterates).
+        _elem_resolved = [
+            _resolve_element_ref(e)
+            for e in _normalize_element_refs(note_data.get("element_refs"))
+        ]
+        asset["draft"]["image_refs_resolved"] = _img_resolved + _elem_resolved
+        asset["draft"]["element_refs"] = _normalize_element_refs(
+            note_data.get("element_refs")
+        )
 
     # For non-draft assets, the `notes` column sometimes carries metadata JSON
     # (wrapper's pulled_from / asset_uuid / shot / leftover draft state with
@@ -2656,10 +2720,15 @@ def _create_draft(payload: dict) -> dict:
     # Canonicalise gallery in the payload — always replace with the absolute
     # path from STATE.folder so the wrapper can't use a relative path later.
     inner["gallery"] = str(gallery)
+    # Higgsfield Element refs — display + traceability only. Stored alongside
+    # image_refs in the notes JSON blob (no new column). NOT wired into the fire
+    # path: firing still uses payload.image as today.
+    element_refs = _normalize_element_refs(payload.get("element_refs"))
     notes_blob = json.dumps({
         "is_draft": True,
         "payload": inner,
         "image_refs": image_refs,
+        "element_refs": element_refs,
         "estimated_cost": payload.get("estimated_cost"),
         "staged_at": now,
         "last_edited_at": now,
@@ -2770,6 +2839,10 @@ def _edit_draft(asset_id: int, payload: dict) -> dict:
         note_data["image_refs"] = image_refs
     if "image_refs" in payload:
         note_data["image_refs"] = payload["image_refs"]
+    if "element_refs" in payload:
+        # Full-replace (atomic list semantics), same as image_refs. Display +
+        # traceability only — never enters the fire path.
+        note_data["element_refs"] = _normalize_element_refs(payload["element_refs"])
     if "estimated_cost" in payload:
         note_data["estimated_cost"] = payload["estimated_cost"]
     note_data["is_draft"] = True
