@@ -1452,6 +1452,14 @@ def _get_asset(asset_id: int) -> Optional[dict]:
         asset["draft"]["element_refs"] = _normalize_element_refs(
             note_data.get("element_refs")
         )
+        # The drawer renders from the TOP-LEVEL refs_resolved, which above was
+        # built only from the prompts table (file image refs). Element refs have
+        # no prompts-table entry, so append the resolved element thumbnails here
+        # — unconditionally, so a pure element-preview draft (element_refs and
+        # zero payload.image) still shows the element. Display only; never enters
+        # the fire path.
+        if _elem_resolved:
+            asset["refs_resolved"] = (asset.get("refs_resolved") or []) + _elem_resolved
 
     # For non-draft assets, the `notes` column sometimes carries metadata JSON
     # (wrapper's pulled_from / asset_uuid / shot / leftover draft state with
