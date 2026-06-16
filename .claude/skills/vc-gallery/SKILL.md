@@ -7,7 +7,7 @@ description: "VC Gallery — the central asset dashboard for AI-generated images
 
 The gallery server at `http://127.0.0.1:8770/` is the single source of truth for all generated assets (images + videos) across every client project. Every agent (image-chef, video-chef, acquisition-chef) talks to it.
 
-> **ROLE (since 2026-06-16): ORGANIZE-FIRST.** The gallery is for viewing, organizing, and triaging assets — browse/search, accept/reject (Review Board), versions, scenes, element/ref display, quickly seeing what's accepted vs not. **Generation now runs via the Higgsfield MCP, not the gallery.** The CLI fire path (`/api/draft/{id}/fire` → `hf_gen_with_sidecar.py`) is **shelved** — don't route new generations through it. The fire/draft docs below are retained for reference and organization (drafts are still useful as staged-intent records), but firing is no longer the gallery's job.
+> **ROLE (since 2026-06-16): ORGANIZE-FIRST.** The gallery is for viewing, organizing, and triaging assets — browse/search, accept/reject (Review Board), versions, scenes, element/ref display, quickly seeing what's accepted vs not. **Generation now runs via the Higgsfield MCP, not the gallery.** The CLI fire path (`/api/draft/{id}/fire` → `hf_gen_with_sidecar.py`) is **shelved** — don't route new generations through it. The fire/draft docs below are retained for reference and organization (drafts are still useful as staged-intent records), but firing is no longer the gallery's job. **Reversible by design:** firing is shelved, not deleted — the director may revive it, so the fire path stays intact. "The MCP" = the connected Higgsfield MCP server.
 
 ## Start the server
 

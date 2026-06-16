@@ -10,6 +10,10 @@ Director's directive: the gallery is for **viewing, organizing, and triaging** �
 - ⛔ DON'T route new generations through the gallery's CLI wrapper. The fire path (`/api/draft/{id}/fire` → `hf_gen_with_sidecar.py`) is **shelved** — too many schema/PATH failures ate the director's flow. Generate via the **Higgsfield MCP** instead.
 - The CLI firing code stays in the repo but is **back-burner**. Don't invest in fixing CLI-fire bugs (PATH spawn, gp2 `batch_size`, `t2v` coercion) unless the director revives that path.
 
+**Execution = Higgsfield MCP.** "The MCP" means the connected Higgsfield MCP server (`mcp__737cd1ae-…`: `generate_video`, `generate_image`, `show_reference_elements`, `list_workspaces`, etc.). All generation triggers go there.
+
+**Reversibility (the director may change his mind — keep this in mind):** firing is *shelved, not deleted*. Keep the fire code path intact and keep re-enabling it a small, clean toggle. Do NOT rip out the fire endpoints/wrappers or make the shelving hard to undo. This is a deliberate "risk reversal" — the gallery may resume firing later.
+
 ## Dependency-update rule (REQUIRED)
 
 When you change the gallery (server, HTML, API, schema, behavior), in the **same change** update every dependent surface so nothing drifts:
