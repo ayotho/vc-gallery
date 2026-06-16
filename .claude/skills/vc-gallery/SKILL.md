@@ -1,11 +1,13 @@
 ---
 name: vc-gallery
-description: "VC Gallery — the central asset dashboard for AI-generated images and videos. Full API reference, visual stacking, drafts, fires, scenes, compare mode. Runs at localhost:8770. Use for: browsing/searching assets, staging drafts, firing generations, checking fire status, reviewing versions, managing shots and scenes."
+description: "VC Gallery — the central asset dashboard for AI-generated images and videos. ORGANIZE-FIRST: browse/search, triage accepted vs rejected, Review Board, versions, scenes, shots, drafts, element/ref display, compare mode. Full API reference. Runs at localhost:8770. Use for organizing and reviewing assets. (Generation now runs via the Higgsfield MCP — gallery firing is shelved.)"
 ---
 
 # /vc-gallery — VC Gallery
 
 The gallery server at `http://127.0.0.1:8770/` is the single source of truth for all generated assets (images + videos) across every client project. Every agent (image-chef, video-chef, acquisition-chef) talks to it.
+
+> **ROLE (since 2026-06-16): ORGANIZE-FIRST.** The gallery is for viewing, organizing, and triaging assets — browse/search, accept/reject (Review Board), versions, scenes, element/ref display, quickly seeing what's accepted vs not. **Generation now runs via the Higgsfield MCP, not the gallery.** The CLI fire path (`/api/draft/{id}/fire` → `hf_gen_with_sidecar.py`) is **shelved** — don't route new generations through it. The fire/draft docs below are retained for reference and organization (drafts are still useful as staged-intent records), but firing is no longer the gallery's job.
 
 ## Start the server
 
