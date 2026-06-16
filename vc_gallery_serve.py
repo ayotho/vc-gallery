@@ -1384,6 +1384,116 @@ def _resolve_element_ref(e: dict) -> dict:
     return out
 
 
+# An asset is registered as a Higgsfield Element by an 'element=<uuid>' token in
+# its notes. It may sit alone ("element=<uuid>") or after a descriptive prefix
+# ("Hero C — boss frontal shock | element=<uuid>"), so match the token anywhere.
+# JSON draft notes reference elements as <<<uuid>>> / "id":"uuid" (no 'element='
+# token), so this deliberately does NOT pick up assets that merely *use* an
+# element — only the asset that *is* one.
+_ELEMENT_NOTE_RE = re.compile(
+    r"element=([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+    r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
+
+
+def _episode_element_map(conn: sqlite3.Connection) -> dict:
+    """uuid → asset info for every 'element='-tagged asset in this episode.
+
+    The wrapper records a Higgsfield Element on an asset by writing an
+    'element=<uuid>' token into notes. Older prompts reference those elements
+    inline as <<<uuid>>> tags (no refs list), so this map lets the drawer turn
+    those tags back into thumbnails. Display + traceability only — current
+    episode scope, never touches the fire path.
+    """
+    out: dict[str, dict] = {}
+    try:
+        rows = conn.execute(
+            "SELECT id, filename, file_path, thumb_path, notes FROM assets "
+            "WHERE notes LIKE '%element=%'"
+        ).fetchall()
+    except sqlite3.Error:
+        return out
+    for r in rows:
+        notes = r["notes"] or ""
+        for m in _ELEMENT_NOTE_RE.finditer(notes):
+            uid = m.group(1).lower()
+            if uid not in out:
+                out[uid] = {
+                    "id": r["id"],
+                    "filename": r["filename"],
+                    "file_path": r["file_path"],
+                    "thumb_path": r["thumb_path"],
+                }
+    return out
+
+
+# Only UUID-shaped tags resolve — <<<image_N>>> placeholders are left alone.
+_PROMPT_UUID_TAG_RE = re.compile(
+    r"<<<\s*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+    r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\s*>>>"
+)
+
+
+def _resolve_prompt_uuid_refs(
+    prompt_text: str,
+    conn: sqlite3.Connection,
+    exclude_element_ids: Optional[set] = None,
+) -> list[dict]:
+    """Resolve <<<uuid>>> Element tags baked into older prompts into refs.
+
+    Legacy hero/CREF references were written straight into the prompt text as
+    <<<uuid>>> tags instead of a refs list, so refs_json stayed empty and the
+    drawer showed nothing. Each uuid that matches an 'element='-tagged asset in
+    THIS episode resolves to that asset's thumbnail (kind 'element'); a uuid with
+    no local match becomes a 'missing' placeholder (it likely lives in another
+    episode or was deleted). Display + traceability only, never the fire path.
+    """
+    if not prompt_text or "<<<" not in prompt_text:
+        return []
+    seen: set[str] = set()
+    uuids: list[str] = []
+    for m in _PROMPT_UUID_TAG_RE.finditer(prompt_text):
+        u = m.group(1).lower()
+        if u not in seen:
+            seen.add(u)
+            uuids.append(u)
+    if not uuids:
+        return []
+    exclude_element_ids = exclude_element_ids or set()
+    emap = _episode_element_map(conn)
+    out: list[dict] = []
+    for u in uuids:
+        if u in exclude_element_ids:
+            continue
+        info = emap.get(u)
+        if info:
+            thumb = info.get("thumb_path")
+            if not thumb and info.get("file_path"):
+                try:
+                    thumb = f"{lib.thumb_key(info['file_path'])}.jpg"
+                except Exception:  # noqa: BLE001 — bad path → fall back to media
+                    thumb = None
+            out.append({
+                "raw": f"<<<{u}>>>",
+                "kind": "element",
+                "url": f"/thumb/{thumb}" if thumb else f"/media/{info['id']}",
+                "filename": info.get("filename") or u,
+                "element_id": u,
+                "asset_id": info["id"],
+                "exists": True,
+            })
+        else:
+            out.append({
+                "raw": f"<<<{u}>>>",
+                "kind": "external_missing",
+                "url": "",
+                "filename": u,
+                "element_id": u,
+                "exists": False,
+            })
+    return out
+
+
 def _get_asset(asset_id: int) -> Optional[dict]:
     conn = STATE.conn()
     row = conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
@@ -1484,6 +1594,23 @@ def _get_asset(asset_id: int) -> Optional[dict]:
                     asset["_system_notes_hidden"] = True
         except (json.JSONDecodeError, TypeError):
             pass  # plain-text notes — leave as-is
+
+    # Resolve <<<uuid>>> Element tags baked into older prompts → thumbnails
+    # (display only, current episode). refs_resolved above is built from the
+    # explicit refs list (file refs) plus any draft element refs; these legacy
+    # inline tags have no refs-list entry, so append whatever resolves here,
+    # skipping uuids already represented. Never enters the fire path.
+    if asset.get("prompt"):
+        _existing_elem_ids = {
+            r.get("element_id")
+            for r in (asset.get("refs_resolved") or [])
+            if isinstance(r, dict) and r.get("element_id")
+        }
+        _prompt_uuid_refs = _resolve_prompt_uuid_refs(
+            asset["prompt"], conn, exclude_element_ids=_existing_elem_ids
+        )
+        if _prompt_uuid_refs:
+            asset["refs_resolved"] = (asset.get("refs_resolved") or []) + _prompt_uuid_refs
 
     history = conn.execute(
         "SELECT id, from_status, to_status, note, reviewer, reviewed_at "
