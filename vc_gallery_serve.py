@@ -370,6 +370,19 @@ class State:
             raise RuntimeError("no working folder set")
         return c
 
+    def close_thread_connection(self) -> None:
+        """Release the SQLite handle owned by the current request thread."""
+        tl = self._conn_local
+        conn = getattr(tl, "conn", None)
+        if conn is None:
+            return
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+        finally:
+            tl.conn = None
+
     # ---- Selection slot (multi-select) -------------------------------
     # Ephemeral pointer to which assets the director is looking at right
     # now. Read by peer Claude sessions via GET /api/selection. Lost on
@@ -3371,6 +3384,16 @@ def _content_type(path: Path) -> str:
 # HTTP handler
 # ---------------------------------------------------------------------------
 
+class GalleryHTTPServer(ThreadingHTTPServer):
+    """Threaded server that deterministically releases per-request DB handles."""
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            STATE.close_thread_connection()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = f"VisualChefGallery/{SERVER_VERSION}"
 
@@ -4382,7 +4405,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("WARN: no folder set. Open one via POST /api/folder.", file=sys.stderr)
 
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server = GalleryHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}/"
     print(f"serving at {url}", file=sys.stderr)
     WATCHER.start()

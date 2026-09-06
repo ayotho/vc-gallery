@@ -462,6 +462,10 @@ than silently using a segment-card frame.
 
 ---
 
+## Changelog (2026-09-07)
+
+- **Request-thread SQLite handles close deterministically** — the threaded HTTP server now releases each request thread's lazy database connection when that request finishes, including error paths. This prevents browser polling from accumulating database/WAL descriptors until the launchd soft file limit crashes the gallery. The long-lived folder watcher keeps its own thread-local connection.
+
 ## Changelog (2026-06-06)
 
 - **Board updates in place (no more shake on new clips)** — background polls (the new-clip scan + fire-completion) used to rebuild the whole board via `innerHTML`, which on the Review Board reset a playing preview/drawer video, kicked the cursor out of a revise note mid-type, and shook the layout whenever a clip landed. A background poll now **reconciles the board in place** (`reconcileKanban()`): cards are added/relocated/removed on the live DOM (a node move preserves a playing `<video>`), the card under active edit is never touched, the open drawer is no longer closed out (the close-drawer check now counts `boardItems`), and a marquee selection survives the poll. The full re-sort/re-cluster rebuild only runs on user-driven refreshes (filter / view change). Frontend-only, fully reversible. **Agent note:** nothing changes for agents — status/notes still go through `PATCH /api/assets/{id}`; the board just no longer flickers while you fire new generations during a review.
