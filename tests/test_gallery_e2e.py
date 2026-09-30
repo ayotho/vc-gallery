@@ -4,10 +4,12 @@ VC Gallery — Playwright end-to-end tests.
 Expects the gallery server running at localhost:8770 with a folder set.
 Run: python -m pytest tests/test_gallery_e2e.py -v
 """
+import os
 import pytest
 from playwright.sync_api import sync_playwright, expect
 
-BASE = "http://localhost:8770"
+# Point mutating UI tests at an isolated fixture server, never the live gallery.
+BASE = os.environ.get("VC_GALLERY_TEST_URL", "http://localhost:8770")
 
 
 @pytest.fixture(scope="module")
@@ -91,8 +93,8 @@ def test_ctrl_click_selects(page):
     cards = page.locator(".card")
     if cards.count() < 2:
         pytest.skip("Need at least 2 cards")
-    cards.nth(0).click(modifiers=["Control"])
-    cards.nth(1).click(modifiers=["Control"])
+    cards.nth(0).click(modifiers=["ControlOrMeta"])
+    cards.nth(1).click(modifiers=["ControlOrMeta"])
     bar = page.locator("#multi-select-bar")
     assert bar.is_visible()
     count_text = bar.locator(".ms-count").inner_text()
@@ -127,7 +129,7 @@ def test_clear_selection(page):
     cards = page.locator(".card")
     if cards.count() == 0:
         pytest.skip("No cards")
-    cards.first.click(modifiers=["Control"])
+    cards.first.click(modifiers=["ControlOrMeta"])
     page.locator("#ms-clear").click()
     bar = page.locator("#multi-select-bar")
     assert not bar.is_visible()
@@ -140,8 +142,8 @@ def test_compare_button_exists(page):
     cards = page.locator(".card")
     if cards.count() < 2:
         pytest.skip("Need at least 2 cards")
-    cards.nth(0).click(modifiers=["Control"])
-    cards.nth(1).click(modifiers=["Control"])
+    cards.nth(0).click(modifiers=["ControlOrMeta"])
+    cards.nth(1).click(modifiers=["ControlOrMeta"])
     cmp = page.locator("#ms-compare")
     assert cmp.is_visible()
 
@@ -151,8 +153,8 @@ def test_compare_opens_overlay(page):
     cards = page.locator(".card")
     if cards.count() < 2:
         pytest.skip("Need at least 2 cards")
-    cards.nth(0).click(modifiers=["Control"])
-    cards.nth(1).click(modifiers=["Control"])
+    cards.nth(0).click(modifiers=["ControlOrMeta"])
+    cards.nth(1).click(modifiers=["ControlOrMeta"])
     page.locator("#ms-compare").click()
     page.wait_for_timeout(500)
     overlay = page.locator("#compare-overlay")
@@ -164,8 +166,8 @@ def test_compare_escape_closes(page):
     cards = page.locator(".card")
     if cards.count() < 2:
         pytest.skip("Need at least 2 cards")
-    cards.nth(0).click(modifiers=["Control"])
-    cards.nth(1).click(modifiers=["Control"])
+    cards.nth(0).click(modifiers=["ControlOrMeta"])
+    cards.nth(1).click(modifiers=["ControlOrMeta"])
     page.locator("#ms-compare").click()
     page.wait_for_timeout(300)
     page.keyboard.press("Escape")

@@ -40,3 +40,7 @@ nohup.out
 /tmp/
 *.tmp
 *.draft.json
+
+# Local runtime hook logs and one-line personal scratch (not product docs)
+/.claude/claudex/
+/IDEA.md
