@@ -9,6 +9,16 @@ description: "VC Gallery — the central asset dashboard for AI-generated images
 
 Folders own file locations; Gallery owns segment (`scene`), shot and review status. Folder-to-segment alignment is a deliberate one-time metadata operation, not continuous sync. Rescans initialise new rows from available metadata but preserve existing `scene`, `shot_id` and `status`, including when media changes. Raw files without supplied scene metadata remain unassigned. Assigning a segment never moves the file. Keep art-direction references separate from production segments unless deliberately assigned.
 
+## Library overlay (read-only, project-agnostic)
+
+`/library` shows every **unit** of a project folder on one screen: its latest full cut, then one column per numbered stage folder (`00_…` to `05_…`). A unit is any sub-folder with at least two numbered stage folders, found by structure, never by name, so episodes, ads and campaigns all work. It reads the tree live on each request (60s cache; **Refresh** bypasses it) and keeps no database. It never moves, renames or writes inside the tree; its only writes are the list of remembered roots in `~/.config/visual_chef/server.json` and image thumbnails in `~/.config/visual_chef/library_thumbs/`, both outside the tree.
+
+- **Rules live in the tree:** optional `<root>/LIBRARY.json` sets `full_cut.folders` (checked in order, per unit), `full_cut.date_in_name` (`MMDDYY` / `DDMMYY` / `YYMMDD` / `YYYY-MM-DD` / `YYYYMMDD` / `none`) and extra `skip` patterns. Without it, the latest cut is the newest video in the unit's deliverables stage, ranked by an unambiguous ISO date in the name, else by modified time. Ambiguous 6-digit dates are never guessed.
+- **Cloud-safe:** files not yet downloaded (`SF_DATALESS`) are labelled "cloud" and never read for thumbnails. Only images get thumbnails. Videos stream on click, with Range support, and download only then.
+- **Code:** `vc_gallery_library.py` (walker), `vc_gallery_library_routes.py` (routes; hooked into `do_GET`/`do_POST`), `visual_chef_library.html`, `tests/test_library_overlay.py`.
+- **API:** `GET /api/library?root=`, `GET /api/library/folder?root=&rel=`, `GET /library/file?root=&rel=`, `GET /library/thumb?root=&rel=`, `GET|POST /api/library/roots`, `POST /api/library/reveal`. Paths outside the root return 403.
+- **Sharing:** the part to share is the Drive folder layout plus `LIBRARY.json`; the server stays localhost-only. A future editor-facing export, or a hosted copy, should reuse the same walker and never introduce a second store.
+
 ## Folder visibility
 
 The toolbar's **Folders** button chooses relative subfolders to hide, including their descendants. Choices persist in `<gallery>/.vc_meta/folder_visibility.json`. Files, approvals and direct asset/media access remain untouched. **Show hidden** sends `show_hidden=1` to asset, facet and scene requests; otherwise these views respect the project visibility choices. Asset filtering happens before counts, pagination and grouping.

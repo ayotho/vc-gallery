@@ -58,6 +58,7 @@ import vc_gallery_lib as lib  # noqa: E402
 import vc_gallery_scan as scan_mod  # noqa: E402
 import vc_gallery_thumb as thumb_mod  # noqa: E402
 import vc_gallery_obs as obs_mod  # noqa: E402
+import vc_gallery_library_routes as library_routes  # noqa: E402  (read-only Library overlay)
 from jsonl_append import append_jsonl  # noqa: E402
 
 # Wrapper path used by draft.fire endpoint
@@ -3560,6 +3561,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             self._serve_dashboard()
             return
+        if library_routes.handle_get(self, path, params):
+            return
         if path == "/healthz":
             self._send_json(200, {
                 "ok": True,
@@ -3791,6 +3794,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+
+        if library_routes.handle_post(self, path):
+            return
 
         if path == "/api/folder-visibility":
             try:
