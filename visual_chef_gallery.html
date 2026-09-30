@@ -2360,14 +2360,16 @@ function groupByShot(items) {
     stackedItems.push(cover);
   });
   ungrouped.forEach(item => stackedItems.push(item));
-  // #48: Sort stacks by newest member so new variants pull the stack to top
+  // #48: Sort stacks by newest member so new variants pull the stack to top.
+  // Match server "recent" = max(first_seen_at, file_modified_at).
+  const recentKey = (m) => Math.max(m.first_seen_at || 0, m.file_modified_at || 0);
   stackedItems.sort((a, b) => {
     const aTime = a._stack
-      ? Math.max(...a._stack.members.map(m => m.first_seen_at || 0))
-      : (a.first_seen_at || 0);
+      ? Math.max(...a._stack.members.map(recentKey))
+      : recentKey(a);
     const bTime = b._stack
-      ? Math.max(...b._stack.members.map(m => m.first_seen_at || 0))
-      : (b.first_seen_at || 0);
+      ? Math.max(...b._stack.members.map(recentKey))
+      : recentKey(b);
     return bTime - aTime;  // DESC — newest first
   });
   return { grouped, ungrouped, order, stackedItems };

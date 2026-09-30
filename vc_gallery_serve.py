@@ -586,7 +586,7 @@ class State:
             if self._conn is not None:
                 self._conn.close()
                 self._conn = None
-        counts = scan_mod.scan(self.folder, self.db_path, quiet=True)
+        counts = scan_mod.scan(self.folder, self.db_path, quiet=True, recurse=True)
         with self._lock:
             self._conn = lib.connect(self.db_path)
         # Backfill shot_ids from filenames for any rows still missing them
@@ -775,7 +775,7 @@ class FolderWatcher:
 
         # Something changed → incremental scan adds new rows, leaves rest alone
         try:
-            scan_mod.scan(folder, self.state.db_path, quiet=True)
+            scan_mod.scan(folder, self.state.db_path, quiet=True, recurse=True)
         except Exception as e:  # noqa: BLE001
             print(f"[watcher] scan failed: {e}", file=sys.stderr)
             return
@@ -1090,25 +1090,36 @@ def _list_assets(params: dict) -> dict:
     #   - sort=status tiebreaks by recent so within a status block the newest
     #     surfaces first (VC-C: was just alphabetical).
     # Patch 2026-05-15:
-    #   - "recent" now sorts by first_seen_at (when scanner first indexed the
-    #     asset) instead of file_modified_at (filesystem mtime). mtime lies
-    #     on copies — cp/rsync/Drive-sync preserve the source mtime, so a
-    #     brand-new draft can have an mtime from a week ago and never land
-    #     at top. first_seen_at is set server-side at insert and never lies.
+    #   - "recent" used first_seen_at (scanner first-index time) instead of
+    #     bare file_modified_at. mtime lies on copies — cp/rsync/Drive-sync
+    #     preserve the source mtime, so a brand-new drop can look old.
+    # Patch 2026-07-24:
+    #   - "recent" is MAX(first_seen_at, file_modified_at). Fresh on-disk
+    #     writes beat bulk-index first_seen noise from recursive scans that
+    #     stamped hundreds of old child-folder files with near-identical
+    #     first_seen values. first_seen still wins for preserved-mtime copies.
+    _recent = (
+        "CASE WHEN COALESCE(a.file_modified_at, 0) > COALESCE(a.first_seen_at, 0) "
+        "THEN a.file_modified_at ELSE a.first_seen_at END DESC"
+    )
+    _oldest = (
+        "CASE WHEN COALESCE(a.file_modified_at, 0) > COALESCE(a.first_seen_at, 0) "
+        "THEN a.file_modified_at ELSE a.first_seen_at END ASC"
+    )
     order = {
-        "recent": "a.first_seen_at DESC",
-        "oldest": "a.first_seen_at ASC",
+        "recent": _recent,
+        "oldest": _oldest,
         "name": "a.filename ASC",
         "name-desc": "a.filename DESC",
-        "status": "a.status, a.first_seen_at DESC, a.filename",
+        "status": f"a.status, {_recent}, a.filename",
         "shot": "a.shot_id IS NULL, a.shot_id = '', a.shot_id, a.filename",
-        "model": "a.model IS NULL, a.model, a.first_seen_at DESC",
+        "model": f"a.model IS NULL, a.model, {_recent}",
         "id": "a.id ASC",
         "id-desc": "a.id DESC",
         # #61 — duration sort for video triage; NULLs (images / unprobed) sink
         "duration": "a.duration_sec IS NULL, a.duration_sec DESC",
         "duration-asc": "a.duration_sec IS NULL, a.duration_sec ASC",
-    }.get(sort, "a.first_seen_at DESC")
+    }.get(sort, _recent)
 
     rows = conn.execute(
         f"{cte_prefix}SELECT a.* {base_sql} ORDER BY {order} LIMIT ? OFFSET ?",
@@ -1674,7 +1685,7 @@ def _inherit_properties(target_id: int, source_id: int) -> Optional[dict]:
     return _get_asset(target_id)
 
 
-UPDATABLE_FIELDS = {"status", "notes", "shot_id", "scene", "score", "project", "client"}
+UPDATABLE_FIELDS = {"status", "notes", "shot_id", "scene", "score", "project", "client", "model", "workflow"}
 # Issue #33 — `filename` is handled out-of-band via _rename_asset because it
 # carries an on-disk move. `file_path` is derived (gallery dir + filename) and
 # is never user-settable directly. Everything else outside this set is rejected

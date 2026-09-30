@@ -7,7 +7,9 @@ Usage:
         --db    "clients/BTW_Documentary/Projects/Episode_8/production/config/visual_chef.db"
 
 Options:
-    --recurse        Walk subdirectories too (default: top-level only)
+    --recurse        Walk subdirectories too (default: top-level only).
+                     Recursive walks skip project scaffolding dirs
+                     (production/, development/, distribution/, .git/, …).
     --dry-run        Report counts without writing to DB
     --quiet          Suppress per-file logging
 
@@ -152,6 +154,41 @@ def probe_has_audio(media_path) -> bool | None:
         return None
 
 
+# Directory basenames recursive scan never enters. Project roots (Tallvue
+# commercials, BTW episode trees, etc.) often sit BESIDE gallery drops and
+# contain hundreds of UI refs / design exports that are not director review
+# media. Without this list, recurse=True floods "Newest first" with child
+# scaffolding and buries the actual root drops the director just added.
+SCAN_SKIP_DIR_NAMES = frozenset({
+    # Gallery / VCS / tooling internals
+    ".visual_chef", ".thumb_cache", ".drafts", ".git", ".svn", ".hg", ".jj",
+    "node_modules", "__pycache__", ".venv", "venv", ".tox", ".pytest_cache",
+    ".mypy_cache", ".ruff_cache", ".overnight", ".claude", ".github",
+    # Client project scaffolding that commonly coexists with drop folders
+    "production", "development", "distribution",
+})
+
+
+def _rel_parts_under_source(path: Path, source: Path) -> tuple[str, ...]:
+    try:
+        return path.resolve().relative_to(source.resolve()).parts
+    except (ValueError, OSError):
+        return path.parts
+
+
+def _is_skipped_scan_path(path: Path, source: Path) -> bool:
+    """True if path lives under a non-gallery directory (skip list)."""
+    parts = _rel_parts_under_source(path, source)
+    # For files, only directory components count; for dirs, all parts count.
+    check = parts if path.is_dir() else parts[:-1]
+    return any(part in SCAN_SKIP_DIR_NAMES for part in check)
+
+
+def _is_internal_gallery_path(path: Path, source: Path) -> bool:
+    """Return True for paths recursive scan must never ingest as assets."""
+    return _is_skipped_scan_path(path, source)
+
+
 def _iter_media_files(source: Path, recurse: bool):
     """Yield Path objects for media files in source.
 
@@ -159,28 +196,51 @@ def _iter_media_files(source: Path, recurse: bool):
     O_CREAT|O_EXCL claim, not real assets. Picking them up pollutes the
     dashboard with empty cards. The wrapper unlinks them on its own failure
     paths; vc_gallery_cleanup.py sweeps any stragglers.
+
+    When recurse=True, walks with an explicit directory denylist so project
+    scaffolding (`production/`, `.git/`, …) never enters the gallery DB.
     """
-    iterator = source.rglob("*") if recurse else source.iterdir()
-    for p in iterator:
-        if not p.is_file():
-            continue
-        if p.suffix.lower() not in lib.MEDIA_EXTS:
-            continue
-        try:
-            if p.stat().st_size == 0:
+    if not recurse:
+        iterator = source.iterdir()
+        for p in iterator:
+            if not p.is_file():
                 continue
-        except OSError:
-            continue
-        # Skip wrapper's `.tmp` download files (real content lands on rename)
-        if p.name.endswith(".tmp") or ".tmp." in p.name:
-            continue
-        # Skip vc-pipeline conform intermediates — Premiere/Topaz writes them
-        # then deletes after consume; if the scanner picks them up we get
-        # zombie DB rows pointing at vanished files. Plan-agent audit
-        # 2026-05-14 found 12+ such zombies in EP8.
-        if p.name.startswith("temp_conform_"):
-            continue
-        yield p
+            if p.suffix.lower() not in lib.MEDIA_EXTS:
+                continue
+            try:
+                if p.stat().st_size == 0:
+                    continue
+            except OSError:
+                continue
+            if p.name.endswith(".tmp") or ".tmp." in p.name:
+                continue
+            if p.name.startswith("temp_conform_"):
+                continue
+            yield p
+        return
+
+    # Recursive: os.walk so we can prune skip-dirs before descending.
+    source = source.resolve()
+    for dirpath, dirnames, filenames in os.walk(source):
+        # Prune in-place — prevents descent into scaffolding / internals.
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in SCAN_SKIP_DIR_NAMES and not d.startswith(".")
+        ]
+        for name in filenames:
+            p = Path(dirpath) / name
+            if p.suffix.lower() not in lib.MEDIA_EXTS:
+                continue
+            try:
+                if p.stat().st_size == 0:
+                    continue
+            except OSError:
+                continue
+            if p.name.endswith(".tmp") or ".tmp." in p.name:
+                continue
+            if p.name.startswith("temp_conform_"):
+                continue
+            yield p
 
 
 # A live fire holds its 0-byte placeholder for at most wait_timeout (≤30 min
@@ -189,6 +249,57 @@ def _iter_media_files(source: Path, recurse: bool):
 # but nothing reaped them afterwards (issues #108/#109 symptom: stale 0-byte
 # files block refires and trip /api/health forever).
 STALE_PLACEHOLDER_AGE_SEC = 2 * 3600
+
+# If a newly scanned file's mtime is older than this, stamp first_seen_at to
+# the mtime instead of "now". Stops recursive bulk imports of old session
+# folders from monopolizing Newest first. Files touched within the window
+# keep first_seen=now so preserved-mtime copies (cp -p / Drive sync) still
+# surface when just dropped into the gallery.
+FIRST_SEEN_FRESH_WINDOW_SEC = 2 * 3600
+
+
+def _first_seen_for_new_file(mtime: float | None) -> float:
+    now = time.time()
+    m = float(mtime if mtime is not None else now)
+    if now - m > FIRST_SEEN_FRESH_WINDOW_SEC:
+        return m
+    return now
+
+
+def _heal_inflated_first_seen(conn) -> int:
+    """Collapse bulk-import first_seen stamps back to file mtime.
+
+    Heals rows where first_seen_at was set to scan-time for historical files
+    (first_seen much newer than mtime). Leaves fresh drops alone.
+    """
+    cur = conn.execute(
+        """
+        UPDATE assets
+           SET first_seen_at = file_modified_at
+         WHERE file_modified_at IS NOT NULL
+           AND first_seen_at IS NOT NULL
+           AND (first_seen_at - file_modified_at) > ?
+        """,
+        (FIRST_SEEN_FRESH_WINDOW_SEC,),
+    )
+    return cur.rowcount
+
+
+def _iter_scan_files(source: Path, recurse: bool):
+    """Yield every file under source using the same directory denylist as media walk."""
+    if not recurse:
+        for p in source.iterdir():
+            if p.is_file():
+                yield p
+        return
+    source_res = source.resolve()
+    for dirpath, dirnames, filenames in os.walk(source_res):
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in SCAN_SKIP_DIR_NAMES and not d.startswith(".")
+        ]
+        for name in filenames:
+            yield Path(dirpath) / name
 
 
 def _reap_stale_placeholders(source: Path, recurse: bool, log_target: Path) -> int:
@@ -200,8 +311,7 @@ def _reap_stale_placeholders(source: Path, recurse: bool, log_target: Path) -> i
     """
     reaped = 0
     now = time.time()
-    iterator = source.rglob("*") if recurse else source.iterdir()
-    for p in iterator:
+    for p in _iter_scan_files(source, recurse):
         try:
             if not p.is_file() or p.suffix.lower() not in lib.MEDIA_EXTS:
                 continue
@@ -220,6 +330,38 @@ def _reap_stale_placeholders(source: Path, recurse: bool, log_target: Path) -> i
             filename=p.name, file_path=str(p), age_seconds=round(age, 1),
         )
     return reaped
+
+
+def _prune_skipped_dir_assets(conn, source: Path, log_target: Path) -> int:
+    """Delete DB rows that live under SCAN_SKIP_DIR_NAMES paths.
+
+    Heals galleries that were recursively scanned before the denylist existed
+    (e.g. production/ UI reference dumps flooding the review queue).
+    """
+    source_res = str(source.resolve())
+    prefix = source_res.rstrip(os.sep) + os.sep
+    rows = conn.execute(
+        "SELECT id, file_path, filename FROM assets WHERE file_path = ? OR file_path LIKE ?",
+        (source_res, prefix + "%"),
+    ).fetchall()
+    removed = 0
+    for r in rows:
+        try:
+            p = Path(r["file_path"])
+        except TypeError:
+            continue
+        if not _is_skipped_scan_path(p, source):
+            continue
+        conn.execute("DELETE FROM prompts WHERE asset_id = ?", (r["id"],))
+        conn.execute("DELETE FROM jobs WHERE asset_id = ?", (r["id"],))
+        conn.execute("DELETE FROM reviews WHERE asset_id = ?", (r["id"],))
+        conn.execute("DELETE FROM assets WHERE id = ?", (r["id"],))
+        removed += 1
+        obs_mod.record_event(
+            log_target, "scan.skipped_dir_pruned", source="scan",
+            asset_id=r["id"], filename=r["filename"], file_path=r["file_path"],
+        )
+    return removed
 
 
 def _pair_sidecar(media: Path) -> Path | None:
@@ -439,6 +581,11 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
             values,
         )
         asset_id = cur.lastrowid
+        # Override schema default first_seen=now for historical bulk imports.
+        conn.execute(
+            "UPDATE assets SET first_seen_at = ? WHERE id = ?",
+            (_first_seen_for_new_file(row.get("file_modified_at")), asset_id),
+        )
         _upsert_job(conn, asset_id, row)
         # Rescue prompt + refs from a co-located .failed.json if present
         # (wrapper exited 6 — image saved, DB write failed).
@@ -498,8 +645,16 @@ def _upsert_asset(conn, row: dict) -> tuple[int, str]:
         if ver is not None:
             row["stack_id"] = base
 
-    set_clause = ", ".join(f"{c} = ?" for c in ASSET_COLUMNS)
-    values = [row[c] for c in ASSET_COLUMNS] + [asset_id]
+    # Existing editorial organisation belongs to Gallery, not a rescan.
+    # Sidecars may initialise new assets, but must not undo later choices.
+    update_columns = [c for c in ASSET_COLUMNS if c not in {"status", "scene", "shot_id"}]
+    # model/workflow are PATCHable for sidecar-less media: a changed-file rescan
+    # with no sidecar value must not wipe a manually set label back to NULL.
+    for c in ("model", "workflow"):
+        if row.get(c) is None and c in update_columns:
+            update_columns.remove(c)
+    set_clause = ", ".join(f"{c} = ?" for c in update_columns)
+    values = [row[c] for c in update_columns] + [asset_id]
     conn.execute(
         f"UPDATE assets SET {set_clause}, last_updated_at = strftime('%s','now') WHERE id = ?",
         values,
@@ -735,6 +890,12 @@ def scan(
 
     try:
         conn.execute("BEGIN")
+        # Drop rows previously ingested from scaffolding dirs (production/,
+        # .git/, …) so recurse heal is automatic after a denylist change.
+        counts["pruned_skipped_dirs"] = _prune_skipped_dir_assets(
+            conn, source, log_target
+        )
+        counts["healed_first_seen"] = _heal_inflated_first_seen(conn)
         # Pre-pass: reconcile renames before walking files, so the upsert
         # loop doesn't insert a fresh dupe row for the renamed file.
         if not recurse:  # rename detection only at the top level for now

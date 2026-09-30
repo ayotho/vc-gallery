@@ -5,6 +5,10 @@ description: "VC Gallery — the central asset dashboard for AI-generated images
 
 # /vc-gallery — VC Gallery
 
+## Folder and editorial ownership
+
+Folders own file locations; Gallery owns segment (`scene`), shot and review status. Folder-to-segment alignment is a deliberate one-time metadata operation, not continuous sync. Rescans initialise new rows from available metadata but preserve existing `scene`, `shot_id` and `status`, including when media changes. Raw files without supplied scene metadata remain unassigned. Assigning a segment never moves the file. Keep art-direction references separate from production segments unless deliberately assigned.
+
 The gallery server at `http://127.0.0.1:8770/` is the single source of truth for all generated assets (images + videos) across every client project. Every agent (image-chef, video-chef, acquisition-chef) talks to it.
 
 > **ROLE (since 2026-06-16): ORGANIZE-FIRST.** The gallery is for viewing, organizing, and triaging assets — browse/search, accept/reject (Review Board), versions, scenes, element/ref display, quickly seeing what's accepted vs not. **Generation now runs via the Higgsfield MCP, not the gallery.** The CLI fire path (`/api/draft/{id}/fire` → `hf_gen_with_sidecar.py`) is **shelved** — don't route new generations through it. The fire/draft docs below are retained for reference and organization (drafts are still useful as staged-intent records), but firing is no longer the gallery's job. **Reversible by design:** firing is shelved, not deleted — the director may revive it, so the fire path stays intact. "The MCP" = the connected Higgsfield MCP server.
@@ -16,7 +20,7 @@ The gallery server at `http://127.0.0.1:8770/` is the single source of truth for
 python3 "C:/Users/aytho/vc-canvas/vc_gallery_serve.py"
 
 # Mac
-python3 "/Users/ayo/Coding projects/vc-canvas/vc_gallery_serve.py"
+python3 "/Users/ayo/Coding projects/vc-gallery/vc_gallery_serve.py"
 
 # With explicit folder
 python3 vc_gallery_serve.py --folder "/path/to/working/folder"
@@ -34,9 +38,21 @@ Port 8770. Localhost only. One process serves one director.
 GET  /healthz              -> {ok, version, current_folder, asset_count}
 GET  /api/folder            -> {current, recent[], asset_count}
 POST /api/folder            -> body: {path: "/abs/path", scan: true}
-POST /api/rescan            -> re-scan current folder
+POST /api/rescan            -> re-scan current folder (recursive; see Scan rules)
 GET  /api/health            -> {ok, db_writable, zero_byte_files, db_asset_count}
 ```
+
+### Scan rules (2026-07-24)
+
+Server rescan/watch uses **recursive** scan with a directory denylist so project
+scaffolding never floods the review queue:
+
+- **Skipped dirs:** `production/`, `development/`, `distribution/`, `.visual_chef/`,
+  `.git/`, `node_modules/`, venvs, caches, `.drafts/`, other dot-dirs.
+- **Kept:** root drops + media session folders (e.g. `midjourney_session*`).
+- Rows previously ingested under skipped dirs are **pruned** on the next scan.
+- Historical bulk imports heal `first_seen_at` back to file mtime when the stamp
+  was inflated by scan-time (keeps old session dumps from beating today's drops).
 
 ### Assets (browse + search)
 
@@ -52,6 +68,9 @@ GET  /api/assets            -> {items[], total, limit, offset}
   ?latest_per_shot=1        show only newest card per shot_id
   ?group_by=shot            returns shot_groups[] with cover + members
   ?updated_after=1716000000 filter by last_updated_at >= epoch (for polling)
+
+# sort=recent (default "Newest first") = MAX(first_seen_at, file_modified_at) DESC
+# so fresh on-disk writes surface even when bulk-index first_seen stamps are noisy.
 
 GET  /api/assets/{id}       -> full asset detail + prompt + refs_resolved + review_history
 GET  /api/facets            -> {status: {review: 45, hero: 12, ...}, source_type: {...}, ...}
@@ -85,7 +104,7 @@ PATCH /api/assets/{id}
   body: {shot_id: "SH450", scene: "corridor", notes: "v2 with better lighting", score: 8.5}
 ```
 
-Updatable fields: `status`, `shot_id`, `scene`, `notes`, `score`, `tags` (array)
+Updatable fields: `status`, `shot_id`, `scene`, `notes`, `score`, `project`, `client`, `model`, `workflow`. `filename` is handled by the rename path; `file_path` is derived and rejected.
 
 ### Status changes
 
