@@ -4132,23 +4132,22 @@ class Handler(BaseHTTPRequestHandler):
                 (name,),
             ).fetchone()
             if match is None:
-                # Fallback: compute hash from the requested thumb name and try
-                # to find the asset by file_path hash. Limit the scan to avoid
-                # O(N) on every missing thumb request.
-                sha = name[:-4]  # strip .jpg
+                # Index all unindexed paths once. A capped fallback permanently
+                # stranded newer assets behind the first 500 unrequested rows.
                 rows = STATE.conn().execute(
-                    "SELECT id, file_path FROM assets WHERE thumb_path IS NULL LIMIT 500"
+                    "SELECT id, file_path FROM assets WHERE thumb_path IS NULL"
                 ).fetchall()
+                updates = []
                 for r in rows:
-                    if lib.thumb_key(r["file_path"]) == sha:
+                    key = f"{lib.thumb_key(r['file_path'])}.jpg"
+                    updates.append((key, r["id"]))
+                    if key == name:
                         match = r
-                        # Backfill thumb_path so this row is found via index next time
-                        STATE.conn().execute(
-                            "UPDATE assets SET thumb_path = ? WHERE id = ?",
-                            (name, r["id"]),
-                        )
-                        STATE.conn().commit()
-                        break
+                if updates:
+                    STATE.conn().executemany(
+                        "UPDATE assets SET thumb_path = ? WHERE id = ? AND thumb_path IS NULL", updates
+                    )
+                    STATE.conn().commit()
             if match is None:
                 self._send_error_json(404, "thumbnail not found")
                 return
@@ -4159,18 +4158,37 @@ class Handler(BaseHTTPRequestHandler):
                 if row_status and row_status["status"] == "draft":
                     self._serve_draft_placeholder()
                     return
-                self._send_error_json(404, "source file missing")
+                self._serve_preview_unavailable("Source missing")
                 return
             name2 = thumb_mod.ensure_thumb(match["file_path"], STATE.thumb_dir)
             if not name2:
-                self._send_error_json(500, "thumbnail generation failed")
+                self._serve_preview_unavailable("Preview unavailable")
                 return
             STATE.conn().execute(
                 "UPDATE assets SET thumb_path = ?, thumb_generated_at = strftime('%s','now') WHERE id = ?",
                 (name2, match["id"]),
             )
+            STATE.conn().commit()
             target = STATE.thumb_dir / name2
         self._send_file(target)
+
+    def _serve_preview_unavailable(self, label: str) -> None:
+        # Explicit diagnostic, never a substitute image or silently black card.
+        from html import escape
+        body = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270">'
+            '<rect width="480" height="270" fill="#27272a"/>'
+            '<text x="240" y="125" text-anchor="middle" font-family="sans-serif" '
+            'font-size="24" fill="#f4f4f5">' + escape(label) + '</text>'
+            '<text x="240" y="160" text-anchor="middle" font-family="sans-serif" '
+            'font-size="14" fill="#a1a1aa">Check the original file</text></svg>'
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/svg+xml")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     _DRAFT_SVG = (
         b'<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270" viewBox="0 0 480 270">'

@@ -102,6 +102,7 @@ def _generate(source: Path, target: Path, *, is_video: bool) -> bool:
                 "-frames:v", "1", "-update", "1",
                 "-vf", vf,
                 "-q:v", str(THUMB_QUALITY),
+                "-f", "image2",
                 str(tmp),
             ]
             try:
