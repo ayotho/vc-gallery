@@ -1027,6 +1027,61 @@ def _build_where(params: dict) -> tuple[str, list[Any]]:
     return " WHERE " + " AND ".join(clauses), values
 
 
+def _visibility_filter(params: dict, where: str = "", values=None):
+    values = list(values or [])
+    if (params.get("show_hidden") or [""])[0] in ("1", "true"):
+        return where, values
+    target = STATE.folder / ".vc_meta" / "folder_visibility.json" if STATE.folder else None
+    hidden = json.loads(target.read_text()).get("hidden", []) if target and target.exists() else []
+    for folder in hidden:
+        prefix = str(STATE.folder / folder).rstrip("/") + "/"
+        where += (" AND " if where else " WHERE ") + "substr(a.file_path, 1, ?) != ?"
+        values.extend([len(prefix), prefix])
+    return where, values
+
+
+def _folder_visibility() -> dict:
+    """Project-owned visibility; folder paths are relative to the library root."""
+    if STATE.folder is None:
+        return {"hidden": [], "folders": []}
+    target = STATE.folder / ".vc_meta" / "folder_visibility.json"
+    hidden = json.loads(target.read_text()).get("hidden", []) if target.exists() else []
+    folders = set(hidden)
+    for row in STATE.conn().execute("SELECT DISTINCT file_path FROM assets"):
+        try:
+            parent = Path(row[0]).relative_to(STATE.folder).parent
+        except ValueError:
+            continue
+        while parent != Path("."):
+            folders.add(parent.as_posix())
+            parent = parent.parent
+    return {"hidden": hidden, "folders": sorted(folders)}
+
+
+def _set_folder_visibility(payload: dict) -> dict:
+    if STATE.folder is None:
+        raise ValueError("no working folder set")
+    folder = payload.get("folder")
+    hidden = payload.get("hidden")
+    if not isinstance(folder, str) or not isinstance(hidden, bool):
+        raise ValueError("folder and boolean hidden are required")
+    rel = Path(folder)
+    if rel.is_absolute() or ".." in rel.parts or rel == Path("."):
+        raise ValueError("choose a relative subfolder")
+    info = _folder_visibility()
+    folder = rel.as_posix()
+    if folder not in info["folders"]:
+        raise ValueError("folder not in this library")
+    selected = set(info["hidden"])
+    selected.add(folder) if hidden else selected.discard(folder)
+    target = STATE.folder / ".vc_meta" / "folder_visibility.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_suffix(".tmp")
+    temp.write_text(json.dumps({"hidden": sorted(selected)}, indent=2))
+    temp.replace(target)
+    return _folder_visibility()
+
+
 def _list_assets(params: dict) -> dict:
     conn = STATE.conn()
 
@@ -1050,6 +1105,23 @@ def _list_assets(params: dict) -> dict:
     else:
         where, values = _build_where_no_prompt(params)
         base_sql = "FROM assets a" + where
+
+    # Explicit project folder visibility, applied before counts and pagination.
+    # Direct asset/media reads remain available; Show hidden bypasses this filter.
+    old_where = where
+    where, values = _visibility_filter(params, where, values)
+    base_sql += where[len(old_where):]
+
+    # Legacy explicit API flag; the UI no longer guesses which folders to hide.
+    if (params.get("hide_render_frames") or [""])[0] in ("1", "true"):
+        frame_clause = (
+            "NOT (a.media_type = 'image' AND ("
+            "a.file_path GLOB '*/blender/frames/*' OR "
+            "a.file_path GLOB '*_frames/*' OR "
+            "a.file_path GLOB '*-frames/*'))"
+        )
+        base_sql += (" AND " if where else " WHERE ") + frame_clause
+        where += (" AND " if where else " WHERE ") + frame_clause
 
     # Wrap with latest-per-shot CTE when requested.
     # The CTE must appear BEFORE the SELECT keyword, so it's kept as a
@@ -1224,7 +1296,7 @@ def _facet_counts(params: dict | None = None) -> dict:
 
     facet_cols = ("status", "source_type", "media_type", "model", "workflow", "scene")
 
-    if not active_filters and not has_prompt_filter:
+    if not active_filters and not has_prompt_filter and not _visibility_filter(params)[0]:
         # Single query: group by each facet in one pass (no WHERE, no JOIN)
         for col in facet_cols:
             sql = (
@@ -1256,6 +1328,7 @@ def _facet_counts(params: dict | None = None) -> dict:
     for col in facet_cols:
         scoped_params = {k: v for k, v in params.items() if k != col}
         where, values = _build_where(scoped_params) if need_join else _build_where_no_prompt(scoped_params)
+        where, values = _visibility_filter(params, where, values)
         sql = (
             f"SELECT a.{col}, count(*) c "
             f"{join_clause}"
@@ -1267,6 +1340,7 @@ def _facet_counts(params: dict | None = None) -> dict:
     # aspect facet (#62) — cross-filtered like the rest, excluding itself
     scoped_params = {k: v for k, v in params.items() if k != "aspect"}
     where, values = _build_where(scoped_params) if need_join else _build_where_no_prompt(scoped_params)
+    where, values = _visibility_filter(params, where, values)
     sql = (
         f"SELECT ({_ASPECT_BUCKET_SQL}) k, count(*) c "
         f"{join_clause}"
@@ -1278,6 +1352,7 @@ def _facet_counts(params: dict | None = None) -> dict:
     # shot_id facet
     scoped_params = {k: v for k, v in params.items() if k != "shot_id"}
     where, values = _build_where(scoped_params) if need_join else _build_where_no_prompt(scoped_params)
+    where, values = _visibility_filter(params, where, values)
     sql = (
         "SELECT a.shot_id, count(*) c "
         f"{join_clause}"
@@ -3287,7 +3362,7 @@ def _fire_draft(asset_id: int) -> dict:
     return {"ok": True, "pid": proc.pid, "payload_file": tmp_path, "engine": engine}
 
 
-def _scene_overview(media_type: str | None = None) -> dict:
+def _scene_overview(media_type: str | None = None, show_hidden: bool = False) -> dict:
     """Scene-grouped overview showing hero/accepted/alternate counts per scene,
     plus the assets themselves grouped by status. (#31 — scene workspace.)
 
@@ -3303,6 +3378,9 @@ def _scene_overview(media_type: str | None = None) -> dict:
     if media_type in ("image", "video"):
         media_clause = "AND a.media_type = ? "
         media_args = (media_type,)
+    visibility, args = _visibility_filter({"show_hidden": ["1" if show_hidden else "0"]})
+    media_clause += visibility.replace(" WHERE ", " AND ", 1) + " "
+    media_args += tuple(args)
     # Get all scenes with their keeper assets in one query
     rows = conn.execute(
         "SELECT a.* FROM assets a "
@@ -3343,7 +3421,7 @@ def _scene_overview(media_type: str | None = None) -> dict:
 
     # Count assets with no scene assigned
     unassigned = conn.execute(
-        "SELECT count(*) FROM assets WHERE (scene IS NULL OR scene = '') "
+        "SELECT count(*) FROM assets a WHERE (scene IS NULL OR scene = '') "
         "AND status NOT IN ('draft', 'rejected', 'legacy') "
         + media_clause.replace("a.media_type", "media_type"),
         media_args,
@@ -3630,6 +3708,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/folder":
             self._send_json(200, STATE.folder_info())
             return
+        if path == "/api/folder-visibility":
+            self._send_json(200, _folder_visibility())
+            return
         if path == "/api/selection":
             # Read-side of the selection bridge. Returns full asset detail
             # for every ID currently selected. Dropped IDs (asset deleted
@@ -3656,7 +3737,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_error_json(409, "no working folder set")
                 return
             media_type = (params.get("media_type", [""])[0] or None)
-            self._send_json(200, _scene_overview(media_type))
+            self._send_json(200, _scene_overview(media_type, (params.get("show_hidden") or [""])[0] in ("1", "true")))
             return
         if path == "/api/facets":
             if STATE.folder is None:
@@ -3710,6 +3791,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+
+        if path == "/api/folder-visibility":
+            try:
+                with STATE._lock:
+                    info = _set_folder_visibility(self._read_json_body())
+                self._send_json(200, info)
+            except ValueError as exc:
+                self._send_error_json(400, str(exc))
+            return
 
         if path == "/api/folder":
             payload = self._read_json_body()

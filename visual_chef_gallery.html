@@ -1450,6 +1450,10 @@ select.mp-input { padding-right: 22px; }
       <label class="latest-toggle" title="Group versions by shot — shows a cover card with a count badge">
         <input type="checkbox" id="chk-latest-only" checked> Stack versions
       </label>
+      <button class="latest-toggle" id="btn-folder-visibility" title="Choose folders to hide from this project">Folders</button>
+      <label class="latest-toggle" title="Include folders hidden from this project">
+        <input type="checkbox" id="chk-show-hidden"> Show hidden
+      </label>
       <button class="icon-btn fires-pill" id="btn-fires" title="Active wrapper fires" style="position: relative; display: none;">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1 C 9 4 12 5 12 9 a 4 4 0 0 1 -8 0 c 0 -3 2 -5 4 -8 z" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>
         <span class="fires-count" id="fires-count">0</span>
@@ -1950,6 +1954,9 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 async function api(path, opts = {}) {
+  if (/^\/api\/(assets|scenes|facets)(\?|$)/.test(path) && $('#chk-show-hidden')?.checked) {
+    path += (path.includes('?') ? '&' : '?') + 'show_hidden=1';
+  }
   const res = await fetch(path, opts);
   if (!res.ok) {
     let msg = `${res.status}`;
@@ -1957,6 +1964,48 @@ async function api(path, opts = {}) {
     throw new Error(msg);
   }
   return res.json();
+}
+
+async function updateFolderVisibilityLabel() {
+  const info = await api('/api/folder-visibility');
+  $('#btn-folder-visibility').textContent = info.hidden.length ? `Folders (${info.hidden.length} hidden)` : 'Folders';
+  return info;
+}
+
+async function openFolderVisibility() {
+  try {
+    const info = await updateFolderVisibilityLabel();
+    const dialog = document.createElement('dialog');
+    dialog.style.cssText = 'width:min(640px,90vw);max-height:75vh;overflow:auto;padding:20px;border:1px solid #888;border-radius:12px';
+    dialog.innerHTML = '<h3>Folder visibility</h3><p>Hide folders and their subfolders from this project. Files and approvals stay untouched.</p><div class="folder-visibility-list"></div><button class="folder-visibility-close">Done</button>';
+    for (const folder of info.folders) {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex;gap:10px;margin:12px 0;overflow-wrap:anywhere';
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.checked = info.hidden.includes(folder);
+      check.setAttribute('aria-label', `Hide ${folder}`);
+      check.addEventListener('change', async () => {
+        check.disabled = true;
+        try {
+          await api('/api/folder-visibility', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({folder, hidden:check.checked})});
+          await updateFolderVisibilityLabel();
+          clearMultiSelection();
+          await refresh();
+        } catch (e) {
+          check.checked = !check.checked;
+          flashToast(e.message, 'error');
+        } finally { check.disabled = false; }
+      });
+      row.append(check, document.createTextNode(`Hide — ${folder}`));
+      dialog.querySelector('.folder-visibility-list').append(row);
+    }
+    if (!info.folders.length) dialog.querySelector('.folder-visibility-list').textContent = 'No indexed subfolders in this project.';
+    dialog.querySelector('.folder-visibility-close').onclick = () => dialog.close();
+    dialog.addEventListener('close', () => dialog.remove());
+    document.body.append(dialog);
+    dialog.showModal();
+  } catch (e) { flashToast(e.message, 'error'); }
 }
 
 function flashToast(msg, kind) {
@@ -5178,6 +5227,7 @@ async function refreshFolder() {
   state.lastChangeAt = info.last_change_at || 0;
   $('#ep-label').textContent = epLabel(info.current);
   $('#ep-meta').textContent = info.current ? '' : '(no folder)';
+  await updateFolderVisibilityLabel();
 }
 
 // Background poll — if the server's last_change_at moves (watcher saw new
@@ -6295,6 +6345,11 @@ function navigateLightbox(delta) {
   }
 
   // Stack versions toggle — group assets by shot_id into stacked cover cards
+  $('#chk-show-hidden').addEventListener('change', () => {
+    clearMultiSelection();
+    refresh();
+  });
+  $('#btn-folder-visibility').addEventListener('click', openFolderVisibility);
   const chkLatest = $('#chk-latest-only');
   if (chkLatest) {
     chkLatest.addEventListener('change', () => {

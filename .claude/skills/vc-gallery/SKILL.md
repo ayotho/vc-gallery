@@ -9,6 +9,14 @@ description: "VC Gallery — the central asset dashboard for AI-generated images
 
 Folders own file locations; Gallery owns segment (`scene`), shot and review status. Folder-to-segment alignment is a deliberate one-time metadata operation, not continuous sync. Rescans initialise new rows from available metadata but preserve existing `scene`, `shot_id` and `status`, including when media changes. Raw files without supplied scene metadata remain unassigned. Assigning a segment never moves the file. Keep art-direction references separate from production segments unless deliberately assigned.
 
+## Folder visibility
+
+The toolbar's **Folders** button chooses relative subfolders to hide, including their descendants. Choices persist in `<gallery>/.vc_meta/folder_visibility.json`. Files, approvals and direct asset/media access remain untouched. **Show hidden** sends `show_hidden=1` to asset, facet and scene requests; otherwise these views respect the project visibility choices. Asset filtering happens before counts, pagination and grouping.
+
+- `GET /api/folder-visibility` returns `{hidden, folders}`.
+- `POST /api/folder-visibility` accepts `{folder: "relative/subfolder", hidden: true|false}`. Absolute paths, traversal, the root itself and unknown folders are rejected.
+- The legacy explicit `hide_render_frames=1` asset-list parameter still excludes images under `_frames/`, `-frames/`, or `/blender/frames/`; the UI no longer guesses which folders to hide. This legacy flag does not filter facet counts.
+
 The gallery server at `http://127.0.0.1:8770/` is the single source of truth for all generated assets (images + videos) across every client project. Every agent (image-chef, video-chef, acquisition-chef) talks to it.
 
 > **ROLE (since 2026-06-16): ORGANIZE-FIRST.** The gallery is for viewing, organizing, and triaging assets — browse/search, accept/reject (Review Board), versions, scenes, element/ref display, quickly seeing what's accepted vs not. **Generation now runs via the Higgsfield MCP, not the gallery.** The CLI fire path (`/api/draft/{id}/fire` → `hf_gen_with_sidecar.py`) is **shelved** — don't route new generations through it. The fire/draft docs below are retained for reference and organization (drafts are still useful as staged-intent records), but firing is no longer the gallery's job. **Reversible by design:** firing is shelved, not deleted — the director may revive it, so the fire path stays intact. "The MCP" = the connected Higgsfield MCP server.
